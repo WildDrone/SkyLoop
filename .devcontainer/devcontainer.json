@@ -1,0 +1,20 @@
+{
+  "name": "WildPerpetua ROS2",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "wildperpetua",
+  "workspaceFolder": "/WildPerpetua",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-vscode.cpptools",
+        "ms-iot.vscode-ros"
+      ],
+      "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash"
+      }
+    }
+  },
+  "postCreateCommand": "source /opt/ros/humble/setup.bash",
+  "remoteUser": "rosuser"
+}

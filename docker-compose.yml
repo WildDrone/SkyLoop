@@ -1,0 +1,23 @@
+services:
+  wildperpetua:
+    build:
+      context: .
+      args:
+        UID: 1000
+        GID: 1000
+    image: wildperpetua:latest
+    container_name: wildperpetua_ros2
+    stdin_open: true
+    tty: true
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ROS_DOMAIN_ID=0
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - ./src:/WildPerpetua/src           # Live workspace mount
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw # X11 socket for GUI
+      - /dev/dri:/dev/dri                 # GPU access
+    devices:
+      - /dev/dri:/dev/dri
+    command: bash

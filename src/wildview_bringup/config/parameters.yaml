@@ -1,0 +1,18 @@
+pso_controller:
+  ros__parameters:
+    number_of_vertical_drones: 1
+    number_of_horizontal_drones: 3
+    vertical_altitude: 65
+    horizontal_altitude: 20
+    vertical_separation: 15
+    distance_max_to_animal: 200
+    distance_min_to_animal: 30
+    number_of_pso_iteration: 100
+    number_of_particles: 100
+    render_pso: False
+
+state_machine:
+  ros__parameters:
+    vertical_altitude: 65
+    horizontal_altitude: 20
+    vertical_separation: 15
