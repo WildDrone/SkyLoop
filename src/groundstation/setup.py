@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'groundstation'
 
@@ -10,7 +12,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/static', glob('groundstation/static/*')),
     ],
+    include_package_data=True,
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='edr',
