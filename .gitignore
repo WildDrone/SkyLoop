@@ -1,0 +1,53 @@
+# Build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+
+# Pictures/Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.tif
+*.webp
+*.ico
+*.svg
+
+# Videos
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ROS bags
+*.bag
+*.db3
+
+# Temporary files
+*.tmp
+*.bak
+*~

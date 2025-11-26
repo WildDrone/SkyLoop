@@ -42,6 +42,9 @@ class DjiNode(Node):
 
         self.dji_controller = DJIControllerLite(self.dji_interface)
 
+        # Start the telemetry stream (TCP socket on port 8081)
+        self.dji_interface.startTelemetryStream()
+
         # Subscribers for drone commands with Empty messages
         self.create_subscription(
             Empty, 'command/takeoff', self.takeoff_callback, 10)
@@ -106,7 +109,7 @@ class DjiNode(Node):
 
         # Timer to publish telemetry at regular intervals
         # Publish every 1/10 second
-        self.create_timer(0.1, self.publish_states)
+        self.create_timer(0.05, self.publish_states)
 
         self.create_timer(1.0, self.publish_camera_status)
 
