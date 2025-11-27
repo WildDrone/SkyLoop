@@ -8,8 +8,9 @@ Project: WildDrone
 """
 
 from launch import LaunchDescription
+from launch.actions import ExecuteProcess, RegisterEventHandler
+from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
-from launch.actions import ExecuteProcess
 
 
 def generate_launch_description():
@@ -17,13 +18,14 @@ def generate_launch_description():
     
     ld = LaunchDescription()
 
-    # Map server for offline tiles
-    map_server = ExecuteProcess(
-        cmd=['python3', 'src/groundstation/offline_map/map_server.py'],
+    # Kill any process using port 8086 (the NiceGUI port) to ensure clean startup
+    cleanup = ExecuteProcess(
+        cmd=['bash', '-c', 
+             'fuser -k 8086/tcp 2>/dev/null || true; sleep 0.5; echo "Port 8086 cleared"'],
+        name='cleanup',
         output='screen'
     )
-    ld.add_action(map_server)
-
+    
     # Perpetual monitoring groundstation (GUI)
     # Note: Drones are connected dynamically through the GUI
     groundstation_node = Node(
@@ -32,6 +34,16 @@ def generate_launch_description():
         name='perpetual_monitor',
         output='screen'
     )
-    ld.add_action(groundstation_node)
+    
+    # Run cleanup first
+    ld.add_action(cleanup)
+    
+    # Start groundstation only after cleanup exits
+    ld.add_action(RegisterEventHandler(
+        OnProcessExit(
+            target_action=cleanup,
+            on_exit=[groundstation_node]
+        )
+    ))
 
     return ld

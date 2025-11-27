@@ -172,9 +172,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     # OVERRIDE PARENT CALLBACKS TO EMIT EVENTS
     # ========================================================================
     
-    def _on_position(self, namespace: str, msg):
-        """Override position callback to emit event."""
-        super()._on_position(namespace, msg)
+    def _on_location(self, namespace: str, msg):
+        """Override location callback to emit event."""
+        super()._on_location(namespace, msg)
         self.drone_position_update.emit({
             'namespace': namespace,
             'lat': msg.latitude,
@@ -258,7 +258,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     'namespace': ns,
                     'drone': self.drones[ns]
                 })
-                self._emit_log(f"🔗 Drone {ns} connected at {ip_address}")
+                self._emit_log(f"[CONNECTED] {ns} at {ip_address}")
         return result
     
     def disconnect_drone(self, namespace: str) -> bool:
@@ -266,7 +266,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         result = super().disconnect_drone(namespace)
         if result:
             self.drone_disconnected_event.emit({'namespace': namespace})
-            self._emit_log(f"🔌 Drone {namespace} disconnected")
+            self._emit_log(f"[DISCONNECTED] {namespace}")
         return result
     
     def set_monitoring_point(self, lat: float, lon: float, alt: float, source: str = "manual"):
@@ -277,13 +277,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             'lon': lon,
             'alt': alt
         })
-        self._emit_log(f"📍 Monitoring point set: ({lat:.6f}, {lon:.6f}, {alt:.1f}m)")
+        self._emit_log(f"[POINT] Set: ({lat:.6f}, {lon:.6f}, {alt:.1f}m)")
     
     def clear_monitoring_point(self):
         """Override to emit event."""
         super().clear_monitoring_point()
         self.monitoring_point_update.emit({'clear': True})
-        self._emit_log("📍 Monitoring point cleared")
+        self._emit_log("[POINT] Cleared")
     
     def _emit_log(self, message: str):
         """Emit a log event."""
@@ -295,6 +295,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _build_ui(self):
         """Build the main UI layout with event subscriptions."""
+        
+        # Clear UI references on page refresh (map and arrows need to be recreated)
+        self.drone_cards.clear()
+        self.drone_arrows.clear()
+        self.drone_labels.clear()
+        self.drone_buttons.clear()
+        self.monitoring_marker = None
+        self.monitoring_circle = None
         
         # Add CSS and JS
         ui.add_head_html("""
@@ -340,6 +348,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Subscribe to events for UI updates
         self._setup_event_subscriptions()
+        
+        # Populate drone list after map is created (so arrows can be placed)
+        self._refresh_drone_list()
     
     def _setup_event_subscriptions(self):
         """Set up event subscriptions for UI updates."""
@@ -347,37 +358,39 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         @self.drone_position_update.subscribe
         def on_position(data: dict):
             ns = data['namespace']
-            lat, lon, alt = data['lat'], data['lon'], data['alt']
+            lat = data['lat']
+            lon = data['lon']
+            alt = data['alt']
             
+            # Update arrow on map
             if ns in self.drone_arrows:
-                heading = self.drones[ns].heading if ns in self.drones else 0
-                arrow = self.drone_arrows[ns]
-                arrow.update(lat, lon, heading)
+                heading = self.drones[ns].heading if ns in self.drones else 0.0
+                self.drone_arrows[ns].update(lat, lon, heading)
             
-            if ns in self.drone_labels:
-                if 'position' in self.drone_labels[ns]:
-                    self.drone_labels[ns]['position'].text = f"📍 {lat:.6f}, {lon:.6f}"
-                if 'altitude' in self.drone_labels[ns]:
-                    self.drone_labels[ns]['altitude'].text = f"📏 {alt:.1f} m"
+            # Update altitude label
+            if ns in self.drone_labels and 'altitude' in self.drone_labels[ns]:
+                self.drone_labels[ns]['altitude'].text = f"{alt:.1f}m"
         
         @self.drone_heading_update.subscribe
         def on_heading(data: dict):
             ns = data['namespace']
             heading = data['heading']
             
-            if ns in self.drones and ns in self.drone_arrows:
-                arrow = self.drone_arrows[ns]
-                arrow.update(arrow.lat, arrow.lng, heading)
+            # Update arrow rotation
+            if ns in self.drone_arrows and ns in self.drones:
+                drone = self.drones[ns]
+                if drone.latitude != 0 and drone.longitude != 0:
+                    self.drone_arrows[ns].update(drone.latitude, drone.longitude, heading)
         
         @self.drone_battery_update.subscribe
         def on_battery(data: dict):
             ns = data['namespace']
-            level = data['level']
+            battery = data['level']
             
             if ns in self.drone_labels and 'battery' in self.drone_labels[ns]:
-                color = 'green' if level > 50 else 'orange' if level > 20 else 'red'
-                self.drone_labels[ns]['battery'].text = f"🔋 {level:.1f}%"
-                self.drone_labels[ns]['battery'].style(f'color: {color}')
+                color = 'green' if battery > 50 else 'orange' if battery > 20 else 'red'
+                self.drone_labels[ns]['battery'].text = f"{battery:.0f}%"
+                self.drone_labels[ns]['battery'].style(f'color: {color}; font-weight: bold')
         
         @self.drone_flight_time_update.subscribe
         def on_flight_time(data: dict):
@@ -391,32 +404,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 self.drone_labels[ns]['flight_time'].text = f"⏱️ {minutes}:{seconds:02d}"
                 self.drone_labels[ns]['flight_time'].style(f'color: {color}; font-weight: bold')
         
-        @self.drone_state_update.subscribe
-        def on_state(data: dict):
-            ns = data['namespace']
-            state = data['state']
-            
-            if ns in self.drone_labels and 'state' in self.drone_labels[ns]:
-                state_icons = {
-                    DroneState.DISCONNECTED: "❌",
-                    DroneState.CONNECTED: "🟢",
-                    DroneState.IDLE: "⚪",
-                    DroneState.TAKING_OFF: "🛫",
-                    DroneState.FLYING_TO_POINT: "✈️",
-                    DroneState.MONITORING: "👁️",
-                    DroneState.RETURNING_HOME: "🏠",
-                    DroneState.LANDING: "🛬",
-                    DroneState.EMERGENCY: "🚨"
-                }
-                icon = state_icons.get(state, "❓")
-                self.drone_labels[ns]['state'].text = f"{icon} {state.value}"
-                
-                # Highlight active monitoring drone
-                if state == DroneState.MONITORING and ns in self.drone_cards:
-                    self.drone_cards[ns].style('border: 3px solid #4CAF50; box-shadow: 0 0 10px #4CAF50')
-                elif ns in self.drone_cards:
-                    self.drone_cards[ns].style('border: 1px solid #ddd; box-shadow: none')
-        
         @self.drone_recording_update.subscribe
         def on_recording(data: dict):
             ns = data['namespace']
@@ -424,11 +411,43 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             if ns in self.drone_labels and 'recording' in self.drone_labels[ns]:
                 if is_recording:
-                    self.drone_labels[ns]['recording'].text = "🔴 RECORDING"
-                    self.drone_labels[ns]['recording'].style('color: red; font-weight: bold; animation: blink 1s infinite')
+                    self.drone_labels[ns]['recording'].text = "REC"
+                    self.drone_labels[ns]['recording'].style('color: red; font-weight: bold;')
+                    if 'recording_icon' in self.drone_labels[ns]:
+                        self.drone_labels[ns]['recording_icon'].style('font-size: 14px; color: red;')
                 else:
-                    self.drone_labels[ns]['recording'].text = "⚫ Standby"
-                    self.drone_labels[ns]['recording'].style('color: gray; animation: none')
+                    self.drone_labels[ns]['recording'].text = ""
+                    self.drone_labels[ns]['recording'].style('color: gray;')
+                    if 'recording_icon' in self.drone_labels[ns]:
+                        self.drone_labels[ns]['recording_icon'].style('font-size: 14px; color: gray;')
+        
+        @self.drone_state_update.subscribe
+        def on_state(data: dict):
+            ns = data['namespace']
+            state = data['state']
+            
+            if ns in self.drone_labels and 'state' in self.drone_labels[ns]:
+                # Use simple text labels - icons are in the card header
+                state_colors = {
+                    DroneState.DISCONNECTED: "background: #ffebee; color: #c62828;",
+                    DroneState.CONNECTED: "background: #e8f5e9; color: #2e7d32;",
+                    DroneState.IDLE: "background: #f5f5f5; color: #616161;",
+                    DroneState.TAKING_OFF: "background: #e3f2fd; color: #1565c0;",
+                    DroneState.FLYING_TO_POINT: "background: #e3f2fd; color: #1565c0;",
+                    DroneState.MONITORING: "background: #f3e5f5; color: #7b1fa2;",
+                    DroneState.RETURNING_HOME: "background: #fff3e0; color: #ef6c00;",
+                    DroneState.LANDING: "background: #e0f2f1; color: #00695c;",
+                    DroneState.EMERGENCY: "background: #ffebee; color: #c62828;"
+                }
+                style = state_colors.get(state, "background: #f5f5f5; color: #616161;")
+                self.drone_labels[ns]['state'].text = state.value
+                self.drone_labels[ns]['state'].style(style)
+                
+                # Highlight active monitoring drone
+                if state == DroneState.MONITORING and ns in self.drone_cards:
+                    self.drone_cards[ns].style('border: 3px solid #4CAF50; box-shadow: 0 0 10px #4CAF50')
+                elif ns in self.drone_cards:
+                    self.drone_cards[ns].style('border: 1px solid #ddd; box-shadow: none')
         
         @self.drone_connected_event.subscribe
         def on_connected(data: dict):
@@ -478,13 +497,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 if countdown > 0:
                     minutes = int(countdown // 60)
                     seconds = int(countdown % 60)
-                    self.countdown_label.text = f"⏳ {next_drone} in {minutes}:{seconds:02d}"
+                    self.countdown_label.text = f"{next_drone} in {minutes}:{seconds:02d}"
                     self.countdown_label.style('color: blue; font-weight: bold')
                     
                     if self.countdown_progress:
                         self.countdown_progress.value = max(0, min(1, countdown / 300))
                 else:
-                    self.countdown_label.text = f"🚀 {next_drone} LAUNCHING!"
+                    self.countdown_label.text = f"{next_drone} LAUNCHING!"
                     self.countdown_label.style('color: red; font-weight: bold; animation: blink 0.5s infinite')
             
             if self.next_drone_label:
@@ -503,12 +522,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     def _build_left_panel(self):
         """Build the left panel with drone management."""
         with ui.card().classes('h-full').style('flex: 1.2; min-width: 350px; overflow-y: auto;'):
-            ui.label("🚁 Drone Fleet").classes('text-2xl font-bold')
+            with ui.row().classes('items-center gap-2'):
+                ui.icon('flight').classes('text-3xl text-primary')
+                ui.label("WildPerpetua").classes('text-2xl font-bold')
             
             ui.separator()
             
             # Connection form
-            with ui.expansion("➕ Add New Drone", icon='add_circle').classes('w-full'):
+            with ui.expansion("Add New Drone", icon='add_circle').classes('w-full'):
                 with ui.row().classes('w-full items-end gap-2'):
                     self.ip_input = ui.input(
                         label='IP Address',
@@ -522,17 +543,19 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     ).style('width: 100px')
                 
                 with ui.row().classes('w-full gap-2 mt-2'):
-                    ui.button('🔗 Connect', on_click=self._connect_drone_ui).props('color=primary')
-                    ui.button('🔄 Refresh', on_click=self._refresh_drone_list).props('flat')
+                    ui.button('Connect', icon='link', on_click=self._connect_drone_ui).props('color=primary')
+                    ui.button('Refresh', icon='refresh', on_click=self._refresh_drone_list).props('flat')
             
             ui.separator()
             
             # Mission Status Card
             with ui.card().classes('w-full').style('background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;'):
-                ui.label("📊 Mission Status").classes('text-lg font-bold')
+                with ui.row().classes('items-center gap-2'):
+                    ui.icon('analytics').classes('text-2xl')
+                    ui.label("Mission Status").classes('text-lg font-bold')
                 
                 with ui.grid(columns=2).classes('w-full gap-2'):
-                    self.mission_status_label = ui.label("⏸️ Inactive").classes('font-bold')
+                    self.mission_status_label = ui.label("Inactive").classes('font-bold')
                     self.active_drone_label = ui.label("Active: --")
                 
                 self.countdown_label = ui.label("").classes('countdown-display mt-2')
@@ -546,8 +569,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.label("Connected Drones").classes('text-lg font-bold')
             self.drone_list_container = ui.column().classes('w-full gap-2')
             
-            # Populate with existing drones
-            self._refresh_drone_list()
+            # Note: _refresh_drone_list() is called after map is created in _build_ui()
     
     def _build_right_panel(self):
         """Build the right panel with map and mission control."""
@@ -559,46 +581,48 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     zoom=15
                 ).style('width: 100%; height: 100%;')
                 
-                # Add tile layer
-                self.map.tile_layer(
-                    url_template="http://127.0.0.1:8098/map/{z}/{x}/{y}.png",
-                    options={'maxZoom': 20}
-                )
-                
                 # Map click handler
-                self.map.on('click', self._on_map_click)
+                self.map.on('map-click', self._on_map_click)
             
             # Control panels row
-            with ui.row().classes('w-full gap-2').style('flex-wrap: wrap;'):
+            with ui.row().classes('w-full gap-2 items-stretch').style('flex-wrap: wrap;'):
                 # Monitoring Point Control
-                with ui.card().classes('').style('flex: 1; min-width: 300px;'):
-                    ui.label("📍 Monitoring Point").classes('text-lg font-bold')
+                with ui.card().classes('').style('flex: 1; min-width: 280px;'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('place').classes('text-xl text-primary')
+                        ui.label("Monitoring Point").classes('text-lg font-bold')
                     
                     with ui.row().classes('w-full gap-2 items-end flex-wrap'):
                         self.lat_input = ui.input(label='Lat', value='0.0').style('width: 100px')
                         self.lon_input = ui.input(label='Lon', value='0.0').style('width: 100px')
                         self.alt_input = ui.input(label='Alt (m)', value='50').style('width: 80px')
-                        ui.button('📌', on_click=self._set_monitoring_point_manual).props('color=primary dense').tooltip('Set Point')
-                        ui.button('🗑️', on_click=self._clear_monitoring_point_ui).props('dense').tooltip('Clear')
+                        ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('color=primary dense').tooltip('Set Point')
+                        ui.button(icon='delete', on_click=self._clear_monitoring_point_ui).props('dense').tooltip('Clear')
                     
-                    ui.label("💡 Click on map to set point").classes('text-xs text-gray-500')
+                    with ui.row().classes('items-center gap-1 text-xs text-gray-500'):
+                        ui.icon('touch_app').style('font-size: 14px')
+                        ui.label("Click on map to set point")
                 
                 # Mission Control
-                with ui.card().classes('').style('flex: 1; min-width: 300px;'):
-                    ui.label("🎯 Mission Control").classes('text-lg font-bold')
+                with ui.card().classes('').style('flex: 1; min-width: 280px;'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('flag').classes('text-xl text-primary')
+                        ui.label("Mission Control").classes('text-lg font-bold')
                     
                     with ui.row().classes('w-full gap-2 items-end'):
                         self.rth_alt_input = ui.input(label='RTH Alt (m)', value='50').style('width: 100px')
                         self.safety_buffer_input = ui.input(label='Buffer (s)', value='60').style('width: 80px')
                     
                     with ui.row().classes('w-full gap-2 mt-2'):
-                        ui.button('▶️ Single', on_click=self._start_single_mission).props('color=green').tooltip('Start single drone mission')
-                        ui.button('🔄 Relay', on_click=self._start_relay_mission).props('color=blue').tooltip('Start relay mission')
-                        ui.button('⏹️ Stop', on_click=self._stop_mission_ui).props('color=red').tooltip('Stop all missions')
+                        ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green').tooltip('Start single drone mission')
+                        ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary').tooltip('Start relay mission')
+                        ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red').tooltip('Stop all missions')
                 
                 # Trajectory Options
-                with ui.card().classes('').style('flex: 1; min-width: 250px;'):
-                    ui.label("🛤️ Trajectory").classes('text-lg font-bold')
+                with ui.card().classes('').style('flex: 1; min-width: 280px;'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('route').classes('text-xl text-primary')
+                        ui.label("Trajectory").classes('text-lg font-bold')
                     
                     self.trajectory_mode = ui.toggle(
                         ['PID', 'DJI Native'], 
@@ -606,57 +630,78 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     ).props('dense')
                     
                     with ui.row().classes('w-full gap-2 mt-2'):
-                        ui.button('📍 Go to Point', on_click=self._goto_point_selected).props('dense')
-                        ui.button('🛑 Abort', on_click=self._abort_trajectories).props('dense color=red')
+                        ui.button('Go to Point', icon='near_me', on_click=self._goto_point_selected).props('dense')
+                        ui.button('Abort', icon='cancel', on_click=self._abort_trajectories).props('dense color=red')
             
             # Event Log
             with ui.card().classes('w-full').style('max-height: 150px;'):
-                ui.label("📋 Event Log").classes('text-lg font-bold')
+                with ui.row().classes('items-center gap-2'):
+                    ui.icon('list_alt').classes('text-xl text-primary')
+                    ui.label("Event Log").classes('text-lg font-bold')
                 with ui.scroll_area().classes('w-full').style('max-height: 100px').props('id=event-log') as self.event_scroll:
                     self.event_log = ui.column().classes('w-full gap-1')
     
     def _build_drone_card(self, namespace: str, drone: DroneData):
-        """Build a card for a single drone."""
+        """Build a compact card for a single drone."""
         color_idx = list(self.drones.keys()).index(namespace) % len(self.drone_colors)
         color = self.drone_colors[color_idx]
         
-        with ui.card().classes('drone-card w-full') as card:
+        with ui.card().classes('drone-card w-full p-2') as card:
             self.drone_cards[namespace] = card
             self.drone_labels[namespace] = {}
             self.drone_buttons[namespace] = {}
             
-            # Header with name and status
-            with ui.row().classes('w-full items-center justify-between'):
-                with ui.row().classes('items-center gap-2'):
-                    ui.html(f'<div style="width: 12px; height: 12px; border-radius: 50%; background: {color}"></div>', sanitize=False)
-                    ui.label(f"{namespace}").classes('text-lg font-bold')
-                self.drone_labels[namespace]['state'] = ui.label(f"🟢 {drone.state.value}").classes('text-sm')
+            # Compact header: color dot, name, state, battery
+            with ui.row().classes('w-full items-center gap-2'):
+                ui.icon('circle').style(f'color: {color}; font-size: 14px')
+                ui.label(f"{namespace}").classes('font-bold').style('flex: 1')
+                self.drone_labels[namespace]['state'] = ui.label(f"{drone.state.value}").classes('text-xs px-1 rounded bg-gray-200')
+                with ui.row().classes('items-center gap-0'):
+                    ui.icon('battery_full').style('font-size: 18px')
+                    self.drone_labels[namespace]['battery'] = ui.label(f"{drone.battery_level:.0f}%").classes('text-xs font-bold')
             
-            # Telemetry grid
-            with ui.grid(columns=3).classes('w-full gap-1 text-sm'):
-                self.drone_labels[namespace]['battery'] = ui.label(f"🔋 {drone.battery_level:.1f}%")
-                self.drone_labels[namespace]['altitude'] = ui.label(f"📏 {drone.altitude:.1f} m")
-                self.drone_labels[namespace]['flight_time'] = ui.label("⏱️ --:--")
-                self.drone_labels[namespace]['satellites'] = ui.label(f"🛰️ {drone.satellite_count}")
-                self.drone_labels[namespace]['recording'] = ui.label("⚫ Standby").classes('col-span-2')
+            # Compact stats row
+            with ui.row().classes('w-full items-center gap-3 text-xs text-gray-600'):
+                with ui.row().classes('items-center gap-0'):
+                    ui.icon('height').style('font-size: 18px')
+                    self.drone_labels[namespace]['altitude'] = ui.label(f"{drone.altitude:.0f}m")
+                with ui.row().classes('items-center gap-0'):
+                    ui.icon('satellite_alt').style('font-size: 18px')
+                    self.drone_labels[namespace]['satellites'] = ui.label(f"{drone.satellite_count}")
+                with ui.row().classes('items-center gap-0'):
+                    ui.icon('timer').style('font-size: 18px')
+                    self.drone_labels[namespace]['flight_time'] = ui.label("--:--")
+                with ui.row().classes('items-center gap-0'):
+                    rec_icon = ui.icon('fiber_manual_record').style('font-size: 18px; color: red;' if drone.is_recording else 'font-size: 18px; color: gray;')
+                    self.drone_labels[namespace]['recording'] = ui.label("REC" if drone.is_recording else "").style('color: red; font-weight: bold;' if drone.is_recording else 'color: gray;')
+                    self.drone_labels[namespace]['recording_icon'] = rec_icon
             
-            self.drone_labels[namespace]['position'] = ui.label(
-                f"📍 {drone.latitude:.6f}, {drone.longitude:.6f}"
-            ).classes('text-xs text-gray-500')
+            # Hidden position label (for data, not display)
+            self.drone_labels[namespace]['position'] = ui.label().classes('hidden')
             
-            # Control buttons
-            with ui.row().classes('w-full gap-1 mt-2'):
-                ui.button('🛫', on_click=lambda ns=namespace: self.send_takeoff(ns)).props('dense size=sm').tooltip('Take Off')
-                ui.button('🛬', on_click=lambda ns=namespace: self.send_land(ns)).props('dense size=sm').tooltip('Land')
-                ui.button('🏠', on_click=lambda ns=namespace: self.send_rth(ns)).props('dense size=sm color=primary').tooltip('RTH')
-                ui.button('⚠️', on_click=lambda ns=namespace: self.send_abort_mission(ns)).props('dense size=sm color=negative').tooltip('Abort')
-                ui.button('🔴', on_click=lambda ns=namespace: self.send_start_recording(ns)).props('dense size=sm').tooltip('Record')
-                ui.button('⏹️', on_click=lambda ns=namespace: self.send_stop_recording(ns)).props('dense size=sm').tooltip('Stop Rec')
+            # All controls in one compact row
+            with ui.row().classes('w-full gap-0 mt-1'):
+                ui.button(icon='flight_takeoff', on_click=lambda ns=namespace: self.send_takeoff(ns)).props('flat dense').tooltip('Take Off')
+                ui.button(icon='flight_land', on_click=lambda ns=namespace: self.send_land(ns)).props('flat dense').tooltip('Land')
+                ui.button(icon='home', on_click=lambda ns=namespace: self.send_rth(ns)).props('flat dense').tooltip('Return to Home')
+                ui.button(icon='warning', on_click=lambda ns=namespace: self.send_abort_mission(ns)).props('flat dense color=negative').tooltip('Abort Mission')
+                ui.button(icon='videocam', on_click=lambda ns=namespace: self.send_start_recording(ns)).props('flat dense color=red').tooltip('Start Recording')
+                ui.button(icon='stop', on_click=lambda ns=namespace: self.send_stop_recording(ns)).props('flat dense').tooltip('Stop Recording')
+                ui.button(icon='my_location', on_click=lambda ns=namespace: self.set_monitoring_point_from_drone(ns)).props('flat dense').tooltip('Use as monitoring point')
+                ui.button(icon='link_off', on_click=lambda ns=namespace: self._disconnect_drone_ui(ns)).props('flat dense color=negative').tooltip('Disconnect')
             
-            # Quick actions row
-            with ui.row().classes('w-full gap-1'):
-                ui.button('📍 Use Pos', on_click=lambda ns=namespace: self.set_monitoring_point_from_drone(ns)).props('dense size=sm flat').tooltip('Set as monitoring point')
-                ui.button('❌ Disconnect', on_click=lambda ns=namespace: self._disconnect_drone_ui(ns)).props('dense size=sm flat color=negative')
+            # Compact gimbal control
+            with ui.row().classes('w-full items-center gap-1'):
+                ui.icon('camera').style('font-size: 20px; color: gray')
+                gimbal_slider = ui.slider(min=-90, max=0, value=0, step=5).props('dense').style('flex: 1')
+                self.drone_labels[namespace]['gimbal'] = ui.label('0°').classes('text-xs').style('min-width: 30px')
+                
+                def update_gimbal(e, ns=namespace):
+                    val = float(e.args)
+                    if ns in self.drone_labels and 'gimbal' in self.drone_labels[ns]:
+                        self.drone_labels[ns]['gimbal'].text = f"{int(val)}°"
+                    self.send_gimbal_pitch(ns, val)
+                gimbal_slider.on('update:model-value', update_gimbal)
             
             # Create arrow on map
             self._add_drone_arrow(namespace, drone.latitude, drone.longitude, drone.heading, color)
@@ -679,9 +724,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     # ========================================================================
     
     def _validate_ip(self, value: str) -> bool:
-        """Validate IP address format."""
+        """Validate IP address format. Returns True if valid."""
         if not value:
-            return True
+            return True  # Empty is OK (will be caught in connect)
+        value = value.strip()
         parts = value.split('.')
         if len(parts) != 4:
             return False
@@ -696,8 +742,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _connect_drone_ui(self):
         """Handle drone connection request from UI."""
-        ip = self.ip_input.value
-        if not ip or not self._validate_ip(ip):
+        ip = self.ip_input.value.strip() if self.ip_input.value else ''
+        if not ip:
+            ui.notify('Please enter an IP address', type='warning')
+            return
+        if not self._validate_ip(ip):
             ui.notify('Please enter a valid IP address', type='warning')
             return
         
@@ -722,14 +771,21 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Refresh the drone list display."""
         if self.drone_list_container is None:
             return
+        
+        # Clear the tracking dictionaries for cards being removed
+        self.drone_cards.clear()
+        self.drone_labels.clear()
+        self.drone_buttons.clear()
+        # Note: Don't clear drone_arrows here - they're on the map
             
         self.drone_list_container.clear()
         
-        with self.drone_list_container:
-            if not self.drones:
+        if not self.drones:
+            with self.drone_list_container:
                 ui.label("No drones connected").classes('text-gray-500 italic')
-            else:
-                for namespace, drone in self.drones.items():
+        else:
+            for namespace, drone in self.drones.items():
+                with self.drone_list_container:
                     self._build_drone_card(namespace, drone)
         
         # Update drones needed estimate
@@ -740,11 +796,16 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if self.drones_needed_label and self.monitoring_point.is_set:
             needed = self.mission_controller.calculate_drones_needed(1.0)
             if needed == float('inf'):
-                self.drones_needed_label.text = "⚠️ Cannot calculate (point too far)"
+                self.drones_needed_label.text = "Cannot calculate (point too far)"
+                self.drones_needed_label.style('color: #ef6c00;')  # warning orange
             else:
                 connected = len(self.drones)
-                status = "✅" if connected >= needed else "⚠️"
-                self.drones_needed_label.text = f"{status} Need {needed} drones for 1hr coverage ({connected} connected)"
+                if connected >= needed:
+                    self.drones_needed_label.text = f"Need {needed} drones for 1hr ({connected} connected)"
+                    self.drones_needed_label.style('color: #2e7d32;')  # success green
+                else:
+                    self.drones_needed_label.text = f"Need {needed} drones for 1hr ({connected} connected)"
+                    self.drones_needed_label.style('color: #ef6c00;')  # warning orange
     
     def _on_map_click(self, e):
         """Handle map click for setting monitoring point."""
@@ -811,10 +872,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             rth_alt = 50.0
         
         if self.start_monitoring_mission(drone_ns, rth_alt):
-            self.mission_status_label.text = "▶️ Single Drone"
+            self.mission_status_label.text = "Single Drone"
+            self.mission_status_label.style('color: #2e7d32;')  # green
             self.active_drone_label.text = f"Active: {drone_ns}"
             ui.notify(f'Mission started', type='positive')
-            self._emit_log(f"▶️ Single mission started with {drone_ns}")
+            self._emit_log(f"Single mission started with {drone_ns}")
         else:
             ui.notify('Failed to start mission', type='negative')
     
@@ -842,20 +904,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             pass
         
         if self.start_relay_mission(drone_list, rth_alt):
-            self.mission_status_label.text = f"🔄 Relay ({len(drone_list)})"
+            self.mission_status_label.text = f"Relay ({len(drone_list)} drones)"
+            self.mission_status_label.style('color: #1565c0;')  # blue
             self.active_drone_label.text = f"Active: {drone_list[0]}"
             ui.notify(f'Relay mission started with {len(drone_list)} drones', type='positive')
-            self._emit_log(f"🔄 Relay mission started: {', '.join(drone_list)}")
+            self._emit_log(f"Relay mission started: {', '.join(drone_list)}")
         else:
             ui.notify('Failed to start relay mission', type='negative')
     
     def _stop_mission_ui(self):
         """Stop the current mission from UI."""
         self.stop_mission()
-        self.mission_status_label.text = "⏹️ Stopped"
+        self.mission_status_label.text = "Stopped"
+        self.mission_status_label.style('color: #c62828;')  # red
         self.countdown_label.text = ""
         ui.notify('Mission stopped', type='info')
-        self._emit_log("⏹️ Mission stopped - drones returning home")
+        self._emit_log("Mission stopped - drones returning home")
     
     def _goto_point_selected(self):
         """Send selected drones to the monitoring point."""
@@ -879,14 +943,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     self.monitoring_point.altitude,
                     0.0
                 )
-            self._emit_log(f"📍 {namespace} going to monitoring point")
+            self._emit_log(f"[NAV] {namespace} going to monitoring point")
     
     def _abort_trajectories(self):
         """Abort all trajectories."""
         for namespace in self.drones.keys():
             self.send_abort_mission(namespace)
         ui.notify('All trajectories aborted', type='info')
-        self._emit_log("🛑 All trajectories aborted")
+        self._emit_log("[ABORT] All trajectories aborted")
 
 
 # ============================================================================
@@ -916,7 +980,7 @@ ui_run.APP_IMPORT_STRING = f'{__name__}:app'
 
 ui.run(
     uvicorn_reload_dirs=str(Path(__file__).parent.resolve()),
-    favicon='🚁',
+    favicon='https://fonts.gstatic.com/s/i/short-term/release/materialsymbolsoutlined/flight/default/48px.svg',
     port=8086,
     title='Perpetual Drone Monitoring'
 )
