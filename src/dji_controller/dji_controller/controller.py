@@ -11,6 +11,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Empty, String, Float64MultiArray, Float64, Int32, Bool
 from sensor_msgs.msg import NavSatFix
+from geometry_msgs.msg import Vector3
 from datetime import datetime
 from requests.exceptions import RequestException
 
@@ -30,7 +31,7 @@ class DjiNode(Node):
             'ip_rc').get_parameter_value().string_value
 
         # Initialize the DJI drone interface
-        self.dji_interface = DJIInterfaceLite(self.ip_rc)
+        self.dji_interface = DJIInterface(self.ip_rc)
 
         # Verify the connection to the drone
         if not self.verify_connection():
@@ -39,8 +40,6 @@ class DjiNode(Node):
             self.get_logger().info("Connection Failure")
             rclpy.shutdown()  # Shut down ROS
             return
-
-        self.dji_controller = DJIControllerLite(self.dji_interface)
 
         # Start the telemetry stream (TCP socket on port 8081)
         self.dji_interface.startTelemetryStream()
@@ -52,13 +51,21 @@ class DjiNode(Node):
         self.create_subscription(Empty, 'command/rth', self.rth_callback, 10)
         self.create_subscription(
             Empty, 'command/abort_mission', self.abort_mission_callback, 10)
+        self.create_subscription(
+            Empty, 'command/enable_virtual_stick', self.enable_virtual_stick_callback, 10)
+        self.create_subscription(
+            Empty, 'command/abort_dji_native_mission', self.abort_dji_native_mission_callback, 10)
 
         # Subscribers for drone commands with specific messages
         self.create_subscription(
             Float64MultiArray, 'command/goto_waypoint', self.goto_waypoint_callback, 10)
+        self.create_subscription(
+            Float64MultiArray, 'command/goto_waypoint_pid_tuning', self.goto_waypoint_pid_tuning_callback, 10)
 
         self.create_subscription(
             String, 'command/goto_trajectory', self.goto_trajectory_callback, 10)
+        self.create_subscription(
+            String, 'command/goto_trajectory_dji_native', self.goto_trajectory_dji_native_callback, 10)
 
         self.create_subscription(
             Float64, 'command/goto_yaw', self.goto_yaw_callback, 10)
@@ -68,9 +75,16 @@ class DjiNode(Node):
             Float64, 'command/gimbal_pitch', self.gimbal_pitch_callback, 10)
         self.create_subscription(
             Float64, 'command/gimbal_yaw', self.gimbal_yaw_callback, 10)
+        self.create_subscription(
+            Float64, 'command/zoom_ratio', self.zoom_ratio_callback, 10)
+        self.create_subscription(
+            Float64, 'command/set_rth_altitude', self.set_rth_altitude_callback, 10)
+        
+        # Virtual stick control subscriber (leftX, leftY, rightX, rightY)
+        self.create_subscription(
+            Float64MultiArray, 'command/stick', self.stick_callback, 10)
 
         # Subscribers for camera commands
-
         self.create_subscription(
             Empty, 'command/camera/start_recording', self.start_recording_callback, 10)
         self.create_subscription(
@@ -78,6 +92,7 @@ class DjiNode(Node):
 
         # Publishers for telemetry
         self.speed_pub = self.create_publisher(Float64, 'speed', 10)
+        self.speed_vector_pub = self.create_publisher(Vector3, 'speed_vector', 10)
         self.heading_pub = self.create_publisher(Float64, 'heading', 10)
         self.attitude_pub = self.create_publisher(String, 'attitude', 10)
         self.location_pub = self.create_publisher(NavSatFix, 'location', 10)
@@ -98,20 +113,43 @@ class DjiNode(Node):
         self.gimbal_pitch_pub = self.create_publisher(
             Float64, 'gimbal_pitch', 10)
 
+        # Mission status publishers
         self.waypoint_reached_pub = self.create_publisher(
             Bool, 'waypoint_reached', 10)
+        self.intermediary_waypoint_reached_pub = self.create_publisher(
+            Bool, 'intermediary_waypoint_reached', 10)
         self.altitude_reached_pub = self.create_publisher(
             Bool, 'altitude_reached', 10)
+        self.yaw_reached_pub = self.create_publisher(
+            Bool, 'yaw_reached', 10)
+
+        # Home location publishers
+        self.home_location_pub = self.create_publisher(
+            NavSatFix, 'home_location', 10)
+        self.home_set_pub = self.create_publisher(
+            Bool, 'home_set', 10)
+        self.distance_to_home_pub = self.create_publisher(
+            Float64, 'distance_to_home', 10)
+
+        # Flight time publishers
+        self.remaining_flight_time_pub = self.create_publisher(
+            Float64, 'remaining_flight_time', 10)
+        self.time_needed_to_go_home_pub = self.create_publisher(
+            Float64, 'time_needed_to_go_home', 10)
+        self.time_needed_to_land_pub = self.create_publisher(
+            Float64, 'time_needed_to_land', 10)
+        self.time_to_landing_spot_pub = self.create_publisher(
+            Float64, 'time_to_landing_spot', 10)
+        self.max_radius_can_fly_and_go_home_pub = self.create_publisher(
+            Float64, 'max_radius_can_fly_and_go_home', 10)
 
         # Camera Publisher
         self.camera_is_recording_pub = self.create_publisher(
             Bool, 'camera/is_recording', 10)
 
         # Timer to publish telemetry at regular intervals
-        # Publish every 1/10 second
+        # Publish every 1/20 second (50ms)
         self.create_timer(0.05, self.publish_states)
-
-        self.create_timer(1.0, self.publish_camera_status)
 
         self.get_logger().info(
             f"DroneNode initialized and connected to IP: {self.ip_rc}")
@@ -121,16 +159,20 @@ class DjiNode(Node):
     ##############################
 
     def verify_connection(self):
-        """Verify the connection to the drone by sending a request to EP_BASE."""
+        """Verify the connection to the drone by sending a test request."""
         timeout_duration = 5  # Timeout in seconds
 
         def connection_attempt():
             try:
-                response = self.dji_interface.requestGet("/", verbose=True)
-                self.get_logger().info(f"Connection successful: {response}")
+                # Try to send a simple request to verify connection
+                response = self.dji_interface.requestSend("/", "", verbose=True)
+                self.get_logger().info(f"Connection attempt response: {response}")
                 return True
             except RequestException as e:
                 self.get_logger().error(f"Connection failed: {e}")
+                return False
+            except Exception as e:
+                self.get_logger().error(f"Connection failed with unexpected error: {e}")
                 return False
 
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -162,6 +204,14 @@ class DjiNode(Node):
         self.get_logger().info("Received abort mission command.")
         self.dji_interface.requestAbortMission()
 
+    def enable_virtual_stick_callback(self, msg):
+        self.get_logger().info("Received enable virtual stick command.")
+        self.dji_interface.requestSendEnableVirtualStick()
+
+    def abort_dji_native_mission_callback(self, msg):
+        self.get_logger().info("Received abort DJI native mission command.")
+        self.dji_interface.requestAbortDJINativeMission()
+
     def goto_waypoint_callback(self, msg: Float64MultiArray):
         self.get_logger().info("Received goto waypoint command.")
         data = msg.data
@@ -171,21 +221,57 @@ class DjiNode(Node):
                 f'Received: {latitude}, {longitude}, {altitude}, {yaw}')
         else:
             self.get_logger().warning('Received an array with fewer than 4 elements.')
+            return
 
         self.dji_interface.requestSendGoToWPwithPID(
             latitude, longitude, altitude, yaw)
 
+    def goto_waypoint_pid_tuning_callback(self, msg: Float64MultiArray):
+        """Navigate to waypoint with custom PID tuning parameters.
+        Expected: [lat, lon, alt, yaw, kp_pos, ki_pos, kd_pos, kp_yaw, ki_yaw, kd_yaw]
+        """
+        self.get_logger().info("Received goto waypoint with PID tuning command.")
+        data = msg.data
+        if len(data) >= 10:
+            lat, lon, alt, yaw, kp_pos, ki_pos, kd_pos, kp_yaw, ki_yaw, kd_yaw = data[:10]
+            self.get_logger().info(
+                f'Waypoint: ({lat}, {lon}, {alt}), Yaw: {yaw}, PID_pos: ({kp_pos}, {ki_pos}, {kd_pos}), PID_yaw: ({kp_yaw}, {ki_yaw}, {kd_yaw})')
+            self.dji_interface.requestSendGoToWPwithPIDtuning(
+                lat, lon, alt, yaw, kp_pos, ki_pos, kd_pos, kp_yaw, ki_yaw, kd_yaw)
+        else:
+            self.get_logger().warning('Received an array with fewer than 10 elements for PID tuning.')
+
     def goto_trajectory_callback(self, msg: String):
-
+        """Navigate through a trajectory.
+        Expected format: list of (lat, lon, alt) tuples with optional final yaw.
+        Example: "[(lat1,lon1,alt1), (lat2,lon2,alt2), ...], finalYaw" or
+                 "[(lat1,lon1,alt1), (lat2,lon2,alt2), ...]"
+        """
         self.get_logger().info("Received goto trajectory command.")
-        waypoints = ast.literal_eval(msg.data)
-        self.get_logger().info(f"Received waypoints: {waypoints}")
+        data = ast.literal_eval(msg.data)
+        
+        # Handle both formats: just waypoints list, or (waypoints, finalYaw) tuple
+        if isinstance(data, tuple) and len(data) == 2:
+            waypoints, finalYaw = data
+        else:
+            waypoints = data
+            finalYaw = 0.0  # Default yaw if not provided
+        
+        self.get_logger().info(f"Received waypoints: {waypoints}, finalYaw: {finalYaw}")
+        self.dji_interface.requestSendNavigateTrajectory(waypoints, finalYaw)
 
-        self.dji_interface.requestSendNavigateTrajectory(waypoints)
+    def goto_trajectory_dji_native_callback(self, msg: String):
+        """Navigate using DJI's native waypoint mission system.
+        Expected: list of [lat, lon, alt] tuples as string.
+        """
+        self.get_logger().info("Received DJI native trajectory command.")
+        waypoints = ast.literal_eval(msg.data)
+        self.get_logger().info(f"Received DJI native waypoints: {waypoints}")
+        self.dji_interface.requestSendNavigateTrajectoryDJINative(waypoints)
 
     def goto_yaw_callback(self, msg):
         self.get_logger().info("Received goto yaw command.")
-        self.dji_controller.gotoYaw(msg.data)
+        self.dji_interface.requestSendGotoYaw(msg.data)
 
     def goto_altitude_callback(self, msg):
         self.get_logger().info("Received goto altitude command.")
@@ -197,7 +283,24 @@ class DjiNode(Node):
 
     def gimbal_yaw_callback(self, msg):
         self.get_logger().info("Received gimbal yaw command.")
-        self.dji_interface.requestSendGimbalPitch(msg.data)
+        self.dji_interface.requestSendGimbalYaw(msg.data)
+
+    def zoom_ratio_callback(self, msg):
+        self.get_logger().info("Received zoom ratio command.")
+        self.dji_interface.requestSendZoomRatio(msg.data)
+
+    def set_rth_altitude_callback(self, msg):
+        self.get_logger().info("Received set RTH altitude command.")
+        self.dji_interface.requestSetRTHAltitude(msg.data)
+
+    def stick_callback(self, msg: Float64MultiArray):
+        """Virtual stick control. Expected: [leftX, leftY, rightX, rightY] in range [-1, 1]."""
+        data = msg.data
+        if len(data) >= 4:
+            leftX, leftY, rightX, rightY = data[:4]
+            self.dji_interface.requestSendStick(leftX, leftY, rightX, rightY)
+        else:
+            self.get_logger().warning('Stick command requires 4 values: leftX, leftY, rightX, rightY')
 
     def start_recording_callback(self, msg):
         self.get_logger().info("Received start recording command.")
@@ -221,64 +324,97 @@ class DjiNode(Node):
 
     def publish_states(self):
         try:
-            states = self.dji_interface.requestAllStates()
-
-            speed = np.sqrt(float(states['speed']['x'])**2 + float(
-                states['speed']['y'])**2 + float(states['speed']['z'])**2)
-
+            # Get telemetry from TCP socket stream
+            telemetry = self.dji_interface.getTelemetry()
+            
+            if not telemetry:
+                return  # No telemetry data available yet
+            
+            # Speed (scalar and vector)
+            speed_data = telemetry.get('speed', {})
+            speed_x = float(speed_data.get('x', 0.0))
+            speed_y = float(speed_data.get('y', 0.0))
+            speed_z = float(speed_data.get('z', 0.0))
+            speed = np.sqrt(speed_x**2 + speed_y**2 + speed_z**2)
+            
             self.speed_pub.publish(Float64(data=speed))
-            self.heading_pub.publish(Float64(data=float(states['heading'])))
-            self.attitude_pub.publish(String(data=str(states['attitude'])))
-
+            self.speed_vector_pub.publish(Vector3(x=speed_x, y=speed_y, z=speed_z))
+            
+            # Heading
+            self.heading_pub.publish(Float64(data=float(telemetry.get('heading', 0.0))))
+            
+            # Attitude
+            self.attitude_pub.publish(String(data=str(telemetry.get('attitude', {}))))
+            
+            # Location
+            location = telemetry.get('location', {})
             self.location_pub.publish(NavSatFix(
-                latitude=float(states['location'].get('latitude', 0.0)),
-                longitude=float(states['location'].get('longitude', 0.0)),
-                altitude=float(states['location'].get('altitude', 0.0))
+                latitude=float(location.get('latitude', 0.0)),
+                longitude=float(location.get('longitude', 0.0)),
+                altitude=float(location.get('altitude', 0.0))
             ))
-
-            self.gimbal_attitude_pub.publish(
-                String(data=str(states['gimbalAttitude'])))
+            
+            # Gimbal
+            gimbal_attitude = telemetry.get('gimbalAttitude', {})
+            self.gimbal_attitude_pub.publish(String(data=str(gimbal_attitude)))
             self.gimbal_joint_attitude_pub.publish(
-                String(data=str(states['gimbalJointAttitude'])))
-            self.zoom_fl_pub.publish(Float64(data=float(states['zoomFl'])))
-            self.hybrid_fl_pub.publish(Float64(data=float(states['hybridFl'])))
-            self.optical_fl_pub.publish(
-                Float64(data=float(states['opticalFl'])))
-            self.zoom_ratio_pub.publish(
-                Float64(data=float(states['zoomRatio'])))
-            self.battery_level_pub.publish(
-                Float64(data=float(states['batteryLevel'])))
-            self.satellite_count_pub.publish(
-                Int32(data=int(states['satelliteCount'])))
-
+                String(data=str(telemetry.get('gimbalJointAttitude', {}))))
             self.gimbal_yaw_pub.publish(
-                Float64(data=float(states['gimbalAttitude'].get('yaw', 0.0))))
+                Float64(data=float(gimbal_attitude.get('yaw', 0.0))))
             self.gimbal_pitch_pub.publish(
-                Float64(data=float(states['gimbalAttitude'].get('pitch', 0.0))))
-
-            # Mission Status publishers
-
-            wpStatus = self.dji_interface.requestWaypointStatus()
-            altitudeStatus = self.dji_interface.requestAltitudeStatus()
-
-            wpStatus = wpStatus == "true"
-            altitudeStatus = altitudeStatus == "true"
-
-            self.waypoint_reached_pub.publish(Bool(data=wpStatus))
-            self.altitude_reached_pub.publish(Bool(data=altitudeStatus))
+                Float64(data=float(gimbal_attitude.get('pitch', 0.0))))
+            
+            # Camera zoom
+            self.zoom_fl_pub.publish(Float64(data=float(telemetry.get('zoomFl', -1))))
+            self.hybrid_fl_pub.publish(Float64(data=float(telemetry.get('hybridFl', -1))))
+            self.optical_fl_pub.publish(Float64(data=float(telemetry.get('opticalFl', -1))))
+            self.zoom_ratio_pub.publish(Float64(data=float(telemetry.get('zoomRatio', 1.0))))
+            
+            # Battery and satellites
+            self.battery_level_pub.publish(
+                Float64(data=float(telemetry.get('batteryLevel', -1))))
+            self.satellite_count_pub.publish(
+                Int32(data=int(telemetry.get('satelliteCount', -1))))
+            
+            # Mission status (using new telemetry-based methods)
+            self.waypoint_reached_pub.publish(
+                Bool(data=telemetry.get('waypointReached', False)))
+            self.intermediary_waypoint_reached_pub.publish(
+                Bool(data=telemetry.get('intermediaryWaypointReached', False)))
+            self.altitude_reached_pub.publish(
+                Bool(data=telemetry.get('altitudeReached', False)))
+            self.yaw_reached_pub.publish(
+                Bool(data=telemetry.get('yawReached', False)))
+            
+            # Home location
+            home_location = telemetry.get('homeLocation', {})
+            self.home_location_pub.publish(NavSatFix(
+                latitude=float(home_location.get('latitude', 0.0)),
+                longitude=float(home_location.get('longitude', 0.0)),
+                altitude=0.0  # Home location typically doesn't include altitude
+            ))
+            self.home_set_pub.publish(Bool(data=telemetry.get('homeSet', False)))
+            self.distance_to_home_pub.publish(
+                Float64(data=float(telemetry.get('distanceToHome', 0.0))))
+            
+            # Flight time information
+            self.remaining_flight_time_pub.publish(
+                Float64(data=float(telemetry.get('remainingFlightTime', 0))))
+            self.time_needed_to_go_home_pub.publish(
+                Float64(data=float(telemetry.get('timeNeededToGoHome', 0))))
+            self.time_needed_to_land_pub.publish(
+                Float64(data=float(telemetry.get('timeNeededToLand', 0))))
+            self.time_to_landing_spot_pub.publish(
+                Float64(data=float(telemetry.get('totalTime', 0))))
+            self.max_radius_can_fly_and_go_home_pub.publish(
+                Float64(data=float(telemetry.get('maxRadiusCanFlyAndGoHome', 0))))
+            
+            # Camera recording status
+            self.camera_is_recording_pub.publish(
+                Bool(data=telemetry.get('isRecording', False)))
 
         except Exception as e:
             self.get_logger().error(f"Error while publishing states: {e}")
-
-    def publish_camera_status(self):
-        try:
-            is_recording = self.dji_interface.requestCameraIsRecording()
-            self.camera_is_recording_pub.publish(Bool(data=is_recording))
-            #self.get_logger().info(f"Camera is_recording: {is_recording}")
-
-        except Exception as e:
-            self.get_logger().error(
-                f"Error while publishing camera status: {e}")
 
 
 def main(args=None):

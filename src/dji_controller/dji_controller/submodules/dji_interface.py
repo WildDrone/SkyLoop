@@ -12,6 +12,7 @@ License: MIT
 For more information, visit: https://github.com/WildDrone/WildBridge
 """
 
+import cv2
 import requests
 import ast
 import json
@@ -50,7 +51,7 @@ class DJIInterface:
     TCP telemetry socket (port 8081).
     """
     
-    def __init__(self, IP_RC="192.168.50.27"):
+    def __init__(self, IP_RC=""):
         self.IP_RC = IP_RC
         self.baseCommandUrl = f"http://{IP_RC}:8080"
         self.telemetryPort = 8081
@@ -241,28 +242,22 @@ class DJIInterface:
         return self.getTelemetry().get("remainingFlightTime", 0)
     
     def getTimeNeededToGoHome(self):
-        """Get time needed to return home in minutes."""
+        """Get time needed to return home in seconds."""
         return self.getTelemetry().get("timeNeededToGoHome", 0)
+    
+    def getTimeNeededToLand(self):
+        """Get time needed to land in seconds."""
+        return self.getTelemetry().get("timeNeededToLand", 0)
+    
+    def getTotalTime(self):
+        """Get total flight time in seconds."""
+        return self.getTelemetry().get("totalTime", 0)
     
     def getMaxRadiusCanFlyAndGoHome(self):
         """Get maximum radius the drone can fly and still return home."""
         return self.getTelemetry().get("maxRadiusCanFlyAndGoHome", 0)
 
-    # ==================== Commands (HTTP on port 8080) ====================
-
-    def requestGet(self, endPoint, verbose=False):
-        """Send a GET request to the drone (for backward compatibility)."""
-        if self.IP_RC == "":
-            print(f"No IP_RC provided, returning empty string for request at {endPoint}")
-            return ""
-        try:
-            response = requests.get(self.baseCommandUrl + endPoint, timeout=5)
-            if verbose:
-                print("EP : " + endPoint + "\t" + str(response.content, encoding="utf-8"))
-            return response.content.decode('utf-8')
-        except requests.exceptions.RequestException as e:
-            print(f"Request error at {endPoint}: {e}")
-            return ""
+    # ==================== Commands (HTTP POST on port 8080) ====================
 
     def requestSend(self, endPoint, data, verbose=False):
         """Send a POST request to the drone."""
@@ -326,50 +321,27 @@ class DJIInterface:
         """Navigate to a waypoint with custom PID tuning parameters."""
         return self.requestSend(EP_TUNING, f"{latitude},{longitude},{altitude},{yaw},{kp_pos},{ki_pos},{kd_pos},{kp_yaw},{ki_yaw},{kd_yaw}")
 
-    def requestSendNavigateTrajectory(self, waypoints, finalYaw=None):
+    def requestSendNavigateTrajectory(self, waypoints, finalYaw):
         """
         Navigate through a series of waypoints.
-        :param waypoints: A list of triples (latitude, longitude, altitude) for each waypoint,
-                          or a list of dicts with 'lat', 'lng', 'y', and optionally 'final_heading'.
-        :param finalYaw: The final yaw angle at the last waypoint (optional if using dict format).
+        :param waypoints: A list of triples (latitude, longitude, altitude) for each waypoint.
+        :param finalYaw: The final yaw angle at the last waypoint.
         :return: The response from the server.
         """
         self.requestSendEnableVirtualStick()
         if not waypoints:
             raise ValueError("No waypoints provided")
 
-        # Handle dict format (backwards compatible with old code)
-        if isinstance(waypoints[0], dict):
-            if len(waypoints) == 1:
-                waypoint_data = waypoints[0]
-                return self.requestSendGoToWPwithPID(
-                    waypoint_data.get('lat'), 
-                    waypoint_data.get('lng'),
-                    waypoint_data.get('y'), 
-                    waypoint_data.get('final_heading', 0)
-                )
-            
-            segments = []
-            for i, waypoint in enumerate(waypoints):
-                lat = waypoint.get('lat')
-                lon = waypoint.get('lng')
-                alt = waypoint.get('y')
-                yaw = waypoint.get('final_heading', 0)
-
-                if i < len(waypoints) - 1:
-                    segments.append(f"{lat},{lon},{alt}")
-                else:
-                    segments.append(f"{lat},{lon},{alt},{yaw}")
-
-            message = ";".join(segments)
-            return self.requestSend(EP_GOTO_TRAJECTORY, message)
-
-        # Handle tuple format
+        # Build the message
+        # All waypoints except the last: "lat,lon,alt"
+        # Last waypoint: "lat,lon,alt,yaw"
         segments = []
         for i, (lat, lon, alt) in enumerate(waypoints):
             if i < len(waypoints) - 1:
+                # Intermediary waypoint: lat,lon,alt
                 segments.append(f"{lat},{lon},{alt}")
             else:
+                # Last waypoint: lat,lon,alt,yaw
                 segments.append(f"{lat},{lon},{alt},{finalYaw}")
 
         message = ";".join(segments)
@@ -455,79 +427,11 @@ class DJIInterface:
         """Deprecated: Use isCameraRecording() instead."""
         return self.isCameraRecording()
 
-
-# Alias for backward compatibility
-DJIInterfaceLite = DJIInterface
-
-
-class DJIControllerLite:
-    """High-level controller for DJI drone operations."""
-    
-    def __init__(self, droneInterface):
-        self.droneInterface = droneInterface
-        self.GAIN_P = 1e-2
-
-    def center(self, xPixelOffset, yPixelOffset):
-        """
-        Center the drone based on pixel offset.
-        Image x axis is going from left to right,
-        y is going from top to bottom,
-        origin is at the center of image.
-        """
-        ctrlX = xPixelOffset * self.GAIN_P
-        ctrlY = -yPixelOffset * self.GAIN_P
-        self.droneInterface.requestSendStick(rightX=ctrlX, rightY=ctrlY)
-
-    def gotoYaw(self, targetYaw):
-        """Rotate to target yaw and wait until reached."""
-        import time
-        if targetYaw > 179 or targetYaw < -179:
-            raise ValueError("Yaw must be in the range [-179, 179]")
-        self.droneInterface.requestSendGotoYaw(targetYaw)
-        while not self.droneInterface.isYawReached():
-            time.sleep(0.1)
-
-    def waitGPSFix(self):
-        """Wait for GPS fix before starting waypoint navigation."""
-        import time
-        while True:
-            location = self.droneInterface.getLocation()
-            if location.get("latitude", 0) == 0:
-                print("Waiting for GPS fix...")
-                time.sleep(0.5)
-            else:
-                break
-
-    def gotoWaypoint(self, latitude, longitude, altitude):
-        """Navigate to waypoint and wait until reached."""
-        import time
-        self.droneInterface.requestSendGoToWP(latitude, longitude, altitude)
-        while not self.droneInterface.isWaypointReached():
-            time.sleep(0.1)
-        print("Waypoint reached")
-
-    def gotoWaypointwithPID(self, latitude, longitude, altitude, yaw):
-        """Navigate to waypoint with PID control and wait until reached."""
-        import time
-        self.droneInterface.requestSendGoToWPwithPID(latitude, longitude, altitude, yaw)
-        while not self.droneInterface.isWaypointReached():
-            time.sleep(0.1)
-        print("Waypoint reached")
-
-    def gotoAltitude(self, altitude):
-        """Navigate to altitude and wait until reached."""
-        import time
-        self.droneInterface.requestSendGotoAltitude(altitude)
-        while not self.droneInterface.isAltitudeReached():
-            time.sleep(0.1)
-        print("Altitude reached")
-
-
 if __name__ == '__main__':
     import time
     import sys
     
-    IP_RC = "192.168.50.27"  # REPLACE WITH YOUR RC IP
+    IP_RC = "10.102.252.30"  # REPLACE WITH YOUR RC IP
     
     if len(sys.argv) > 1:
         IP_RC = sys.argv[1]
@@ -569,11 +473,15 @@ if __name__ == '__main__':
                 print(f"  WP Reached:  {dji.isWaypointReached()}")
                 print(f"  Yaw Reached: {dji.isYawReached()}")
                 print(f"  Alt Reached: {dji.isAltitudeReached()}")
-                print(f"  Flight Time: {dji.getRemainingFlightTime()} min remaining")
+                print(f"  Flight Time: {dji.getRemainingFlightTime()} s remaining")
+                print(f"  Total Time:  {dji.getTotalTime()} s")
+                print(f"  Time to RTH: {dji.getTimeNeededToGoHome()} s")
+                print(f"  Time to Land:{dji.getTimeNeededToLand()} s")
+                print(f"  Max Radius:  {dji.getMaxRadiusCanFlyAndGoHome()} m")
             else:
                 print("Waiting for telemetry data...")
             
-            time.sleep(0.1)  # Update every 100ms
+            time.sleep(0.1)  # Update every 500ms
             
     except KeyboardInterrupt:
         print("\n\nStopping telemetry stream...")
