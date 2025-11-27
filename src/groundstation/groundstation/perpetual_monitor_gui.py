@@ -16,6 +16,7 @@ from pathlib import Path
 from datetime import datetime
 
 import rclpy
+import time
 from rclpy.executors import ExternalShutdownException
 
 from nicegui import Event, app, ui, ui_run
@@ -142,6 +143,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.active_drone_label = None
         self.next_drone_label = None
         self.drones_needed_label = None
+        self.relay_alert_label = None
+        self.relay_alert_icon = None
+        self._relay_alert_visible = False
+        self.reconnect_label = None
+        self.mission_timer_label = None
+        self._mission_start_time = None
+        self._mission_timer_task = None
         
         # Event log
         self.event_log = None
@@ -221,6 +229,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     def _on_mission_status_update(self, namespace: str, state: MissionState, message: str):
         """Override mission status callback to emit event."""
         super()._on_mission_status_update(namespace, state, message)
+        
+        # Start mission timer when first drone reaches monitoring point
+        if state == MissionState.MONITORING and self._mission_start_time is None:
+            self._mission_start_time = time.time()
+            self._start_mission_timer()
         
         # Map MissionState to DroneState
         state_map = {
@@ -498,16 +511,50 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     minutes = int(countdown // 60)
                     seconds = int(countdown % 60)
                     self.countdown_label.text = f"{next_drone} in {minutes}:{seconds:02d}"
-                    self.countdown_label.style('color: blue; font-weight: bold')
+                    self.countdown_label.style('color: white; font-weight: bold')
                     
                     if self.countdown_progress:
                         self.countdown_progress.value = max(0, min(1, countdown / 300))
+                    
+                    # Threshold-based preparation alerts
+                    if hasattr(self, 'relay_alert_label') and self.relay_alert_label:
+                        if countdown <= 60:  # 1 minute - CONNECT NOW
+                            self._relay_alert_visible = True
+                            self.relay_alert_label.text = f"CONNECT {next_drone} NOW!"
+                            self.relay_alert_label.style('color: #ff4444; animation: blink 0.5s infinite')
+                            self.relay_alert_icon.style('color: #ff4444; animation: blink 0.5s infinite')
+                        elif countdown <= 180:  # 3 minutes - GET READY
+                            self._relay_alert_visible = True
+                            self.relay_alert_label.text = f"GET {next_drone} READY"
+                            self.relay_alert_label.style('color: #ffaa00')
+                            self.relay_alert_icon.style('color: #ffaa00')
+                        elif countdown <= 300:  # 5 minutes - PREPARE
+                            self._relay_alert_visible = True
+                            self.relay_alert_label.text = f"Prepare {next_drone}"
+                            self.relay_alert_label.style('color: #88ff88')
+                            self.relay_alert_icon.style('color: #88ff88')
+                        else:
+                            self._relay_alert_visible = False
                 else:
                     self.countdown_label.text = f"{next_drone} LAUNCHING!"
-                    self.countdown_label.style('color: red; font-weight: bold; animation: blink 0.5s infinite')
+                    self.countdown_label.style('color: #ff4444; font-weight: bold; animation: blink 0.5s infinite')
+                    if hasattr(self, 'relay_alert_label') and self.relay_alert_label:
+                        self._relay_alert_visible = True
+                        self.relay_alert_label.text = f"LAUNCH {next_drone}!"
+                        self.relay_alert_label.style('color: #ff4444; font-weight: bold; animation: blink 0.5s infinite')
+                        self.relay_alert_icon.style('color: #ff4444; animation: blink 0.5s infinite')
             
             if self.next_drone_label:
                 self.next_drone_label.text = f"Next: {next_drone}"
+            
+            # Show drones needing reconnection (battery swap)
+            if self.reconnect_label:
+                needs_reconnect = self.mission_controller.get_drones_needing_reconnection()
+                if needs_reconnect:
+                    self.reconnect_label.text = f"Swap battery & reconnect: {', '.join(needs_reconnect)}"
+                    self.reconnect_label.style('color: #ffcc00; font-weight: bold')
+                else:
+                    self.reconnect_label.text = ""
         
         @self.log_event.subscribe
         def on_log(data: dict):
@@ -558,8 +605,23 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     self.mission_status_label = ui.label("Inactive").classes('font-bold')
                     self.active_drone_label = ui.label("Active: --")
                 
+                # Mission elapsed time
+                with ui.row().classes('items-center gap-2 mt-2'):
+                    ui.icon('timer').classes('text-xl')
+                    self.mission_timer_label = ui.label("00:00:00").classes('font-bold text-lg font-mono')
+                
                 self.countdown_label = ui.label("").classes('countdown-display mt-2')
                 self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback').classes('mt-1')
+                
+                # Relay preparation alert with icon
+                with ui.row().classes('items-center gap-2 mt-2').bind_visibility_from(self, '_relay_alert_visible'):
+                    self.relay_alert_icon = ui.icon('notifications_active').classes('text-2xl')
+                    self.relay_alert_label = ui.label("").classes('font-bold text-lg')
+                
+                # Show which drones need reconnection (battery swap)
+                with ui.row().classes('items-center gap-2 mt-2'):
+                    ui.icon('battery_charging_full').classes('text-xl')
+                    self.reconnect_label = ui.label("").classes('text-sm')
                 
                 self.drones_needed_label = ui.label("").classes('text-sm mt-1')
             
@@ -794,17 +856,25 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     def _update_drones_needed(self):
         """Update the estimate of drones needed for continuous coverage."""
         if self.drones_needed_label and self.monitoring_point.is_set:
-            needed = self.mission_controller.calculate_drones_needed(1.0)
+            result = self.mission_controller.calculate_drones_needed()
+            needed, travel_time, distance = result
+            
+            # Format travel time
+            travel_min = int(travel_time // 60)
+            travel_sec = int(travel_time % 60)
+            distance_km = distance / 1000
+            
             if needed == float('inf'):
-                self.drones_needed_label.text = "Cannot calculate (point too far)"
-                self.drones_needed_label.style('color: #ef6c00;')  # warning orange
+                self.drones_needed_label.text = f"Point too far! ({distance_km:.1f}km, {travel_min}:{travel_sec:02d} travel)"
+                self.drones_needed_label.style('color: #c62828;')  # error red
             else:
                 connected = len(self.drones)
+                info = f"Need {needed} drones ({distance_km:.1f}km, ~{travel_min}min travel)"
                 if connected >= needed:
-                    self.drones_needed_label.text = f"Need {needed} drones for 1hr ({connected} connected)"
+                    self.drones_needed_label.text = f"{info} ✓ {connected} connected"
                     self.drones_needed_label.style('color: #2e7d32;')  # success green
                 else:
-                    self.drones_needed_label.text = f"Need {needed} drones for 1hr ({connected} connected)"
+                    self.drones_needed_label.text = f"{info} ⚠ only {connected} connected"
                     self.drones_needed_label.style('color: #ef6c00;')  # warning orange
     
     def _on_map_click(self, e):
@@ -872,6 +942,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             rth_alt = 50.0
         
         if self.start_monitoring_mission(drone_ns, rth_alt):
+            # Reset mission timer (will start when drone reaches monitoring point)
+            self._stop_mission_timer()
+            self._mission_start_time = None
+            if self.mission_timer_label:
+                self.mission_timer_label.text = "00:00:00"
+            
             self.mission_status_label.text = "Single Drone"
             self.mission_status_label.style('color: #2e7d32;')  # green
             self.active_drone_label.text = f"Active: {drone_ns}"
@@ -890,6 +966,24 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify('Need at least 2 drones for relay mission', type='warning')
             return
         
+        # Check if we have enough drones for the distance
+        result = self.mission_controller.calculate_drones_needed()
+        needed, travel_time, distance = result
+        connected = len(self.drones)
+        
+        if needed == float('inf'):
+            ui.notify(f'Point too far! ({distance/1000:.1f}km) - cannot maintain coverage', type='negative')
+            return
+        
+        if connected < needed:
+            # Show warning but allow proceeding (operator may have spare batteries ready)
+            ui.notify(
+                f'Warning: Need {needed} drones for continuous coverage, only {connected} connected. '
+                f'Coverage gaps may occur!', 
+                type='warning',
+                timeout=5000
+            )
+        
         drone_list = list(self.drones.keys())
         
         try:
@@ -904,17 +998,46 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             pass
         
         if self.start_relay_mission(drone_list, rth_alt):
+            # Reset mission timer (will start when drone reaches monitoring point)
+            self._stop_mission_timer()
+            self._mission_start_time = None
+            if self.mission_timer_label:
+                self.mission_timer_label.text = "00:00:00"
+            
+            travel_min = int(travel_time // 60)
             self.mission_status_label.text = f"Relay ({len(drone_list)} drones)"
             self.mission_status_label.style('color: #1565c0;')  # blue
             self.active_drone_label.text = f"Active: {drone_list[0]}"
-            ui.notify(f'Relay mission started with {len(drone_list)} drones', type='positive')
-            self._emit_log(f"Relay mission started: {', '.join(drone_list)}")
+            ui.notify(f'Relay mission started with {len(drone_list)} drones (~{travel_min}min to point)', type='positive')
+            self._emit_log(f"Relay mission started: {', '.join(drone_list)} - {distance/1000:.1f}km to point")
         else:
             ui.notify('Failed to start relay mission', type='negative')
+    
+    def _start_mission_timer(self):
+        """Start the mission elapsed time timer."""
+        if self._mission_timer_task is None:
+            self._mission_timer_task = ui.timer(1.0, self._update_mission_timer)
+    
+    def _stop_mission_timer(self):
+        """Stop the mission elapsed time timer."""
+        if self._mission_timer_task is not None:
+            self._mission_timer_task.cancel()
+            self._mission_timer_task = None
+    
+    def _update_mission_timer(self):
+        """Update the mission timer display."""
+        if self._mission_start_time is not None and self.mission_timer_label:
+            elapsed = time.time() - self._mission_start_time
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            seconds = int(elapsed % 60)
+            self.mission_timer_label.text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     
     def _stop_mission_ui(self):
         """Stop the current mission from UI."""
         self.stop_mission()
+        self._stop_mission_timer()
+        # Keep the final time displayed, just stop updating
         self.mission_status_label.text = "Stopped"
         self.mission_status_label.style('color: #c62828;')  # red
         self.countdown_label.text = ""

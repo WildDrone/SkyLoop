@@ -142,11 +142,14 @@ class MissionController:
         self.cmd_set_rth_altitude: Optional[Callable[[str, float], None]] = None
         self.cmd_start_recording: Optional[Callable[[str], None]] = None
         self.cmd_stop_recording: Optional[Callable[[str], None]] = None
+        self.cmd_set_gimbal_pitch: Optional[Callable[[str, float], None]] = None
         self.cmd_abort: Optional[Callable[[str], None]] = None
         
         # Telemetry getters (set by ROS node)
         self.get_drone_position: Optional[Callable[[str], Tuple[float, float, float]]] = None
+        self.get_drone_home_position: Optional[Callable[[str], Tuple[float, float]]] = None  # home lat, lon
         self.get_drone_heading: Optional[Callable[[str], float]] = None
+        self.get_drone_gimbal_pitch: Optional[Callable[[str], float]] = None
         self.get_remaining_flight_time: Optional[Callable[[str], float]] = None
         self.get_battery_level: Optional[Callable[[str], float]] = None
         self.get_satellite_count: Optional[Callable[[str], int]] = None
@@ -197,11 +200,49 @@ class MissionController:
         bearing = math.atan2(x, y)
         return (math.degrees(bearing) + 360) % 360
     
-    def estimate_travel_time(self, distance: float, average_speed: float = 10.0) -> float:
-        """Estimate travel time in seconds."""
-        if average_speed <= 0:
+    # Speed constants
+    VERTICAL_SPEED = 4.0      # m/s - DJI climb/descent rate
+    HORIZONTAL_SPEED_PID = 5.0      # m/s - PID control mode
+    HORIZONTAL_SPEED_NATIVE = 10.0  # m/s - DJI native trajectory mode
+    
+    def estimate_travel_time(self, distance: float, altitude: float = None, 
+                             horizontal_speed: float = None, vertical_speed: float = None) -> float:
+        """
+        Estimate travel time in seconds, including climb time.
+        
+        Args:
+            distance: Horizontal distance in meters
+            altitude: Target altitude in meters (uses config monitoring_alt if None)
+            horizontal_speed: Horizontal flight speed in m/s 
+                              (default: 5 m/s for PID mode, 10 m/s for DJI native)
+            vertical_speed: Vertical climb speed in m/s (default 4 m/s)
+        
+        Returns:
+            Estimated travel time in seconds
+        """
+        # Use defaults if not specified
+        if vertical_speed is None:
+            vertical_speed = self.VERTICAL_SPEED
+        if horizontal_speed is None:
+            # Use conservative PID speed by default for safety margin
+            horizontal_speed = self.HORIZONTAL_SPEED_PID
+        
+        if horizontal_speed <= 0:
             return float('inf')
-        return distance / average_speed
+        
+        # Use monitoring altitude from config if not specified
+        if altitude is None:
+            altitude = self.config.monitoring_alt if self.config.monitoring_alt > 0 else 50.0
+        
+        # Time to climb to altitude (from ground)
+        climb_time = altitude / vertical_speed if vertical_speed > 0 else 0
+        
+        # Time for horizontal translation
+        horizontal_time = distance / horizontal_speed
+        
+        # Total travel time = climb + horizontal (sequential, not parallel)
+        # Note: DJI drones typically climb first, then translate
+        return climb_time + horizontal_time
     
     def get_average_travel_time(self) -> float:
         """Get average travel time from history."""
@@ -525,6 +566,9 @@ class MissionController:
         
         # Check if within video trigger distance
         if distance <= mission.video_trigger_distance and not mission.video_started:
+            # Sync gimbal pitch from currently monitoring drone (for relay missions)
+            self._sync_gimbal_pitch(namespace)
+            
             if self.cmd_start_recording:
                 self.cmd_start_recording(namespace)
             mission.video_started = True
@@ -534,6 +578,9 @@ class MissionController:
         # Check if reached target
         if distance <= self.config.position_tolerance:
             if not mission.video_started:
+                # Sync gimbal pitch from currently monitoring drone (for relay missions)
+                self._sync_gimbal_pitch(namespace)
+                
                 # Start recording if not already started
                 if self.cmd_start_recording:
                     self.cmd_start_recording(namespace)
@@ -641,6 +688,31 @@ class MissionController:
         if self.on_mission_event:
             self.on_mission_event(namespace, event)
     
+    def _sync_gimbal_pitch(self, namespace: str):
+        """
+        Sync gimbal pitch from the currently monitoring drone to the incoming drone.
+        
+        This ensures the relay drone has the same camera angle as the drone it's replacing.
+        Called when the incoming drone starts recording.
+        """
+        if not self.cmd_set_gimbal_pitch or not self.get_drone_gimbal_pitch:
+            return
+        
+        # Find the currently monitoring drone (not the incoming one)
+        current_monitoring_ns = None
+        for ns, mission in self.drone_missions.items():
+            if ns != namespace and mission.state == MissionState.MONITORING:
+                current_monitoring_ns = ns
+                break
+        
+        if current_monitoring_ns:
+            # Get gimbal pitch from currently monitoring drone
+            current_pitch = self.get_drone_gimbal_pitch(current_monitoring_ns)
+            
+            # Set the same gimbal pitch on the incoming drone
+            self.cmd_set_gimbal_pitch(namespace, current_pitch)
+            self._emit_event(namespace, f"Gimbal pitch synced to {current_pitch:.1f}° from {current_monitoring_ns}")
+    
     # ========================================================================
     # STATE QUERIES
     # ========================================================================
@@ -662,46 +734,91 @@ class MissionController:
             return self.drone_order[next_index]
         return None
     
+    def get_drones_needing_reconnection(self) -> List[str]:
+        """
+        Get list of drones that have completed their mission and need battery swap.
+        
+        These are drones the operator should reconnect (with fresh battery) 
+        using the SAME namespace.
+        
+        Returns:
+            List of drone namespaces that need reconnection
+        """
+        needs_reconnect = []
+        for ns in self.drone_order:
+            mission = self.drone_missions.get(ns)
+            if mission and mission.state == MissionState.COMPLETED:
+                needs_reconnect.append(ns)
+        return needs_reconnect
+        return needs_reconnect
+    
     def is_mission_active(self) -> bool:
         """Check if any mission is active."""
         return self.relay_state == RelayState.ACTIVE or \
                any(m.state not in [MissionState.IDLE, MissionState.COMPLETED, MissionState.ABORTED, MissionState.ERROR] 
                    for m in self.drone_missions.values())
     
-    def calculate_drones_needed(self, mission_duration_hours: float = 1.0) -> int:
+    def calculate_drones_needed(self, mission_duration_hours: float = 1.0, battery_swap_time: float = 180.0) -> Tuple[int, float, float]:
         """
         Calculate minimum drones needed for continuous coverage.
         
+        Accounts for drone reuse - once a drone lands and gets a fresh battery,
+        it can rejoin the rotation.
+        
         Args:
             mission_duration_hours: How long to maintain coverage
+            battery_swap_time: Time in seconds to swap battery and reconnect (default 3 min)
         
         Returns:
-            Minimum number of drones needed
+            Tuple of (drones_needed, estimated_travel_time_seconds, distance_meters)
+            drones_needed is float('inf') if point is too far
         """
         # Assume average flight time of 25 minutes (1500 seconds) for DJI drones
         avg_flight_time = 1500  # seconds
         
-        # Get average travel time
+        # Get average travel time - prefer from history, else estimate from home position
         avg_travel = self.get_average_travel_time()
+        distance = 0.0
+        
         if avg_travel == 0:
-            # Estimate based on distance if no history
-            if self.get_drone_position and self.drone_order:
+            # Estimate based on home position (not current position)
+            if self.get_drone_home_position and self.drone_order:
+                first_drone = self.drone_order[0]
+                home_lat, home_lon = self.get_drone_home_position(first_drone)
+                if home_lat != 0.0 or home_lon != 0.0:
+                    distance = self.haversine_distance(home_lat, home_lon, 
+                        self.config.monitoring_lat, self.config.monitoring_lon)
+                    avg_travel = self.estimate_travel_time(distance)
+            
+            # Fallback: try current drone position if no home set
+            if avg_travel == 0 and self.get_drone_position and self.drone_order:
                 first_drone = self.drone_order[0]
                 lat, lon, _ = self.get_drone_position(first_drone)
-                distance = self.haversine_distance(lat, lon, 
-                    self.config.monitoring_lat, self.config.monitoring_lon)
-                avg_travel = self.estimate_travel_time(distance)
-            else:
+                if lat != 0.0 or lon != 0.0:
+                    distance = self.haversine_distance(lat, lon, 
+                        self.config.monitoring_lat, self.config.monitoring_lon)
+                    avg_travel = self.estimate_travel_time(distance)
+            
+            # Last fallback
+            if avg_travel == 0:
                 avg_travel = 300  # Assume 5 minutes
+                distance = 3000  # ~3km at 10m/s
         
-        # Effective monitoring time per drone
-        effective_time = avg_flight_time - (2 * avg_travel) - self.config.safety_buffer_seconds
+        # Effective monitoring time per drone (time actually spent at monitoring point)
+        effective_monitoring = avg_flight_time - (2 * avg_travel) - self.config.safety_buffer_seconds
         
-        if effective_time <= 0:
-            return float('inf')  # Impossible
+        if effective_monitoring <= 0:
+            return (float('inf'), avg_travel, distance)  # Impossible - point too far
         
-        mission_duration_seconds = mission_duration_hours * 3600
-        return max(1, math.ceil(mission_duration_seconds / effective_time))
+        # Full cycle time: fly out + monitor + fly back + swap battery
+        cycle_time = avg_flight_time + battery_swap_time
+        
+        # For continuous coverage, we need enough drones so that when drone N 
+        # needs to leave, drone N+1 is ready to take over.
+        # This means we need ceil(cycle_time / effective_monitoring) drones in rotation.
+        drones_needed = max(2, math.ceil(cycle_time / effective_monitoring))
+        
+        return (drones_needed, avg_travel, distance)
     
     def shutdown(self):
         """Shutdown the mission controller."""
@@ -856,6 +973,34 @@ class MissionController:
             return False
         
         self._emit_event(namespace, "Mission recovered, can restart")
+        return True
+    
+    def reset_drone_for_reuse(self, namespace: str) -> bool:
+        """
+        Reset a drone's mission state so it can be used again in the relay rotation.
+        
+        Called when a drone reconnects after battery swap.
+        
+        Args:
+            namespace: The drone namespace
+            
+        Returns:
+            True if reset successful, False if drone not in mission
+        """
+        if namespace not in self.drone_missions:
+            return False
+        
+        mission = self.drone_missions[namespace]
+        
+        # Reset to IDLE so it can be launched again
+        mission.state = MissionState.IDLE
+        mission.error_message = ""
+        mission.retry_count = 0
+        mission.mission_start_time = None
+        mission.monitoring_start_time = None
+        mission.transit_start_time = None
+        
+        self._emit_event(namespace, "Drone reconnected - ready for next relay cycle")
         return True
     
     def get_mission_summary(self) -> Dict:

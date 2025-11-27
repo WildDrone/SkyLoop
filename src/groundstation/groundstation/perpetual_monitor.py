@@ -176,12 +176,38 @@ class MissionCalculator:
         bearing = math.atan2(x, y)
         return (math.degrees(bearing) + 360) % 360
     
+    # Speed constants
+    VERTICAL_SPEED = 4.0      # m/s - DJI climb/descent rate
+    HORIZONTAL_SPEED_PID = 5.0      # m/s - PID control mode
+    HORIZONTAL_SPEED_NATIVE = 10.0  # m/s - DJI native trajectory mode
+    
     @staticmethod
-    def estimate_travel_time(distance: float, average_speed: float = 10.0) -> float:
-        """Estimate travel time in seconds given distance and average speed."""
-        if average_speed <= 0:
+    def estimate_travel_time(distance: float, altitude: float = 50.0,
+                             horizontal_speed: float = 5.0, vertical_speed: float = 4.0) -> float:
+        """
+        Estimate travel time in seconds, including climb time.
+        
+        Args:
+            distance: Horizontal distance in meters
+            altitude: Target altitude in meters (default 50m)
+            horizontal_speed: Horizontal flight speed in m/s 
+                              (5 m/s for PID mode, 10 m/s for DJI native)
+            vertical_speed: Vertical climb speed in m/s (default 4 m/s)
+        
+        Returns:
+            Estimated travel time in seconds
+        """
+        if horizontal_speed <= 0:
             return float('inf')
-        return distance / average_speed
+        
+        # Time to climb to altitude (from ground)
+        climb_time = altitude / vertical_speed if vertical_speed > 0 else 0
+        
+        # Time for horizontal translation
+        horizontal_time = distance / horizontal_speed
+        
+        # Total travel time = climb + horizontal (sequential)
+        return climb_time + horizontal_time
     
     @staticmethod
     def calculate_relay_countdown(
@@ -280,6 +306,7 @@ class PerpetualMonitorNode(Node):
         mc.cmd_set_rth_altitude = self.send_set_rth_altitude
         mc.cmd_start_recording = self.send_start_recording
         mc.cmd_stop_recording = self.send_stop_recording
+        mc.cmd_set_gimbal_pitch = self.send_gimbal_pitch
         mc.cmd_abort = self.send_abort_mission
         
         # Telemetry getters
@@ -289,7 +316,13 @@ class PerpetualMonitorNode(Node):
             self.drones[ns].altitude
         ) if ns in self.drones else (0.0, 0.0, 0.0)
         
+        mc.get_drone_home_position = lambda ns: (
+            self.drones[ns].home_latitude,
+            self.drones[ns].home_longitude
+        ) if ns in self.drones else (0.0, 0.0)
+        
         mc.get_drone_heading = lambda ns: self.drones[ns].heading if ns in self.drones else 0.0
+        mc.get_drone_gimbal_pitch = lambda ns: self.drones[ns].gimbal_pitch if ns in self.drones else 0.0
         mc.get_remaining_flight_time = lambda ns: self.drones[ns].remaining_flight_time if ns in self.drones else 0.0
         mc.get_battery_level = lambda ns: self.drones[ns].battery_level if ns in self.drones else 0.0
         mc.get_satellite_count = lambda ns: self.drones[ns].satellite_count if ns in self.drones else 0
@@ -411,6 +444,10 @@ class PerpetualMonitorNode(Node):
         
         # Set up ROS publishers for commands to this drone
         self._setup_drone_publishers(namespace)
+        
+        # If this drone is part of an active relay mission, reset its state for reuse
+        if self.mission_controller.reset_drone_for_reuse(namespace):
+            self.get_logger().info(f"Drone {namespace} reset for relay reuse")
         
         # Notify UI
         if self.ui_handler:
