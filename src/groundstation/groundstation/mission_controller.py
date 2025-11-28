@@ -65,14 +65,21 @@ class DroneMissionStatus:
     assigned_altitude: float = 50.0
     target_heading: float = 0.0  # Target heading when reaching monitoring point
     
+    # Current target position (for trajectory re-evaluation during transit)
+    target_lat: float = 0.0
+    target_lon: float = 0.0
+    target_alt: float = 0.0
+    
     # Timing
     mission_start_time: float = 0.0
     transit_start_time: float = 0.0
     monitoring_start_time: float = 0.0
+    rth_start_time: float = 0.0
     
     # Travel time tracking
     estimated_travel_time: float = 0.0
     actual_travel_time: float = 0.0
+    actual_rth_time: float = 0.0
     
     # Video recording
     video_trigger_distance: float = 50.0
@@ -81,7 +88,6 @@ class DroneMissionStatus:
     # Error handling
     error_message: str = ""
     retry_count: int = 0
-
 
 @dataclass 
 class RelayMissionConfig:
@@ -174,6 +180,9 @@ class MissionController:
         # Travel time history for estimation
         self.travel_time_history: List[float] = []
         
+        # Flight time history (actual total flight times from completed missions)
+        self.flight_time_history: List[float] = []
+        
         # Mission thread
         self._mission_thread: Optional[threading.Thread] = None
         self._running = False
@@ -264,6 +273,12 @@ class MissionController:
         """Get average travel time from history."""
         if self.travel_time_history:
             return sum(self.travel_time_history) / len(self.travel_time_history)
+        return 0.0
+    
+    def get_average_flight_time(self) -> float:
+        """Get average total flight time from history (takeoff to RTH)."""
+        if self.flight_time_history:
+            return sum(self.flight_time_history) / len(self.flight_time_history)
         return 0.0
     
     # ========================================================================
@@ -549,27 +564,79 @@ class MissionController:
             time.sleep(5.0)
             mission.state = MissionState.CLIMBING_TO_ALTITUDE
             self._update_status(namespace, mission.state, "Taking off...")
+            
+            # Send goto_altitude command to climb to target altitude
+            if self.cmd_goto_altitude:
+                self.cmd_goto_altitude(namespace, mission.assigned_altitude)
+                self._emit_event(namespace, f"Climbing to {mission.assigned_altitude}m")
         
         elif mission.state == MissionState.CLIMBING_TO_ALTITUDE:
-            # Check if altitude reached
+            # Check if altitude reached - prefer using the altitude_reached flag from drone
+            altitude_reached = False
+            current_alt = 0.0
+            target_alt = mission.assigned_altitude
+            
+            if self.get_altitude_reached:
+                altitude_reached = self.get_altitude_reached(namespace)
+            
             if self.get_drone_position:
-                _, _, alt = self.get_drone_position(namespace)
-                
-                if alt >= (mission.assigned_altitude - self.config.altitude_tolerance):
-                    # Wait 5 seconds before starting transit
-                    time.sleep(5.0)
-                    # Altitude reached, start transit
-                    mission.state = MissionState.TRANSIT_TO_MONITORING
-                    mission.transit_start_time = time.time()
-                    self._start_transit(namespace, mission)
-                    self._update_status(namespace, mission.state, "Climbing to altitude...")
+                _, _, current_alt = self.get_drone_position(namespace)
+                # Fallback: also check if altitude is above target (in case flag not set)
+                if current_alt >= (target_alt - self.config.altitude_tolerance):
+                    altitude_reached = True
+            
+            # Log altitude progress periodically
+            if not hasattr(mission, '_last_alt_log') or time.time() - mission._last_alt_log > 5.0:
+                mission._last_alt_log = time.time()
+                self._emit_event(namespace, f"Climbing: {current_alt:.1f}m / {target_alt:.1f}m (reached={altitude_reached})")
+            
+            if altitude_reached:
+                # Wait 5 seconds before starting transit
+                time.sleep(5.0)
+                # Altitude reached, start transit
+                mission.state = MissionState.TRANSIT_TO_MONITORING
+                mission.transit_start_time = time.time()
+                self._start_transit(namespace, mission)
+                self._update_status(namespace, mission.state, "Climbing to altitude...")
         
         elif mission.state == MissionState.TRANSIT_TO_MONITORING:
+            # Log transit progress periodically
+            if self.get_drone_position:
+                lat, lon, _ = self.get_drone_position(namespace)
+                target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
+                target_lon = mission.target_lon if mission.target_lon != 0 else self.config.monitoring_lon
+                distance = self.haversine_distance(lat, lon, target_lat, target_lon)
+                
+                if not hasattr(mission, '_last_transit_log') or time.time() - mission._last_transit_log > 5.0:
+                    mission._last_transit_log = time.time()
+                    self._emit_event(namespace, f"Transit: {distance:.1f}m to target")
+            
             self._check_approach(namespace, mission)
         
         elif mission.state == MissionState.APPROACHING_POINT:
-            # Already recording, check if reached
+            # Already recording, check if reached (by flag or distance)
+            reached = False
+            distance = float('inf')
+            
+            # Check waypoint_reached flag
             if self.get_waypoint_reached and self.get_waypoint_reached(namespace):
+                reached = True
+            
+            # Also check by distance as fallback
+            if self.get_drone_position:
+                lat, lon, _ = self.get_drone_position(namespace)
+                target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
+                target_lon = mission.target_lon if mission.target_lon != 0 else self.config.monitoring_lon
+                distance = self.haversine_distance(lat, lon, target_lat, target_lon)
+                if distance <= self.config.position_tolerance:
+                    reached = True
+            
+            # Log progress periodically
+            if not hasattr(mission, '_last_approach_log') or time.time() - mission._last_approach_log > 3.0:
+                mission._last_approach_log = time.time()
+                self._emit_event(namespace, f"Approaching: {distance:.1f}m to target (tolerance: {self.config.position_tolerance}m)")
+            
+            if reached:
                 mission.state = MissionState.MONITORING
                 mission.monitoring_start_time = time.time()
                 
@@ -631,7 +698,10 @@ class MissionController:
                 target_heading = self.get_drone_heading(current_monitoring_ns)
                 self._emit_event(namespace, f"Target heading synced to {target_heading:.1f}° from {current_monitoring_ns}")
         
-        # Store target heading for use when reaching destination
+        # Store target position and heading for trajectory re-evaluation
+        mission.target_lat = target_lat
+        mission.target_lon = target_lon
+        mission.target_alt = target_alt
         mission.target_heading = target_heading
         
         # Estimate travel time
@@ -663,6 +733,29 @@ class MissionController:
         
         self._emit_event(namespace, f"Transit to monitoring point ({distance:.0f}m, ~{mission.estimated_travel_time:.0f}s) [{mode_str}] heading={target_heading:.0f}°")
     
+    def _send_updated_trajectory(self, namespace: str, mission: DroneMissionStatus):
+        """Send updated waypoint command during transit (for trajectory re-evaluation)."""
+        target_lat = mission.target_lat
+        target_lon = mission.target_lon
+        target_alt = mission.target_alt
+        target_heading = mission.target_heading
+        
+        if self.use_dji_native and self.cmd_goto_waypoint_dji_native:
+            self.cmd_goto_waypoint_dji_native(
+                namespace,
+                target_lat,
+                target_lon,
+                target_alt
+            )
+        elif self.cmd_goto_waypoint:
+            self.cmd_goto_waypoint(
+                namespace,
+                target_lat,
+                target_lon,
+                target_alt,
+                target_heading
+            )
+    
     def _get_currently_monitoring_drone(self, exclude: str = None) -> Optional[str]:
         """
         Get the namespace of the drone currently in MONITORING state.
@@ -679,7 +772,7 @@ class MissionController:
         return None
     
     def _check_approach(self, namespace: str, mission: DroneMissionStatus):
-        """Check if drone is approaching video trigger distance."""
+        """Check if drone is approaching video trigger distance and re-evaluate trajectory if needed."""
         if not self.get_drone_position:
             return
         
@@ -694,9 +787,29 @@ class MissionController:
             current_monitoring_ns = self._get_currently_monitoring_drone(exclude=namespace)
             if current_monitoring_ns and self.get_drone_position:
                 mon_lat, mon_lon, _ = self.get_drone_position(current_monitoring_ns)
-                if mon_lat != 0.0 or mon_lon != 0.0:
+                if mon_lat != 0.0 and mon_lon != 0.0:
                     target_lat = mon_lat
                     target_lon = mon_lon
+                    
+                    # Re-evaluate trajectory if monitoring drone moved > 5 meters
+                    # Only for PID mode - DJI Native doesn't support live trajectory updates
+                    if not self.use_dji_native:
+                        if mission.target_lat != 0.0 and mission.target_lon != 0.0:
+                            target_moved = self.haversine_distance(
+                                mission.target_lat, mission.target_lon,
+                                target_lat, target_lon
+                            )
+                            if target_moved > 5.0:  # Monitoring drone moved more than 5m
+                                self._emit_event(namespace, f"Target moved {target_moved:.1f}m - updating trajectory")
+                                mission.target_lat = target_lat
+                                mission.target_lon = target_lon
+                                
+                                # Also sync heading from monitoring drone
+                                if self.get_drone_heading:
+                                    mission.target_heading = self.get_drone_heading(current_monitoring_ns)
+                                
+                                # Send updated waypoint command
+                                self._send_updated_trajectory(namespace, mission)
         
         distance = self.haversine_distance(lat, lon, target_lat, target_lon)
         
@@ -800,6 +913,14 @@ class MissionController:
         old_mission = self.drone_missions.get(old_ns)
         
         if old_mission:
+            # Record actual flight time (from takeoff to return home command)
+            if old_mission.mission_start_time:
+                actual_flight_time = time.time() - old_mission.mission_start_time
+                self.flight_time_history.append(actual_flight_time)
+                if len(self.flight_time_history) > 10:
+                    self.flight_time_history.pop(0)
+                self._emit_event(old_ns, f"Flight time recorded: {actual_flight_time:.0f}s")
+            
             # Stop recording
             if old_mission.video_started and self.cmd_stop_recording:
                 self.cmd_stop_recording(old_ns)
@@ -809,6 +930,7 @@ class MissionController:
                 self.cmd_rth(old_ns)
             
             old_mission.state = MissionState.RETURNING_HOME
+            old_mission.rth_start_time = time.time()  # Track RTH start time
             self._emit_event(old_ns, "Relay handoff - returning home")
         
         # Update current drone index
@@ -899,7 +1021,7 @@ class MissionController:
                any(m.state not in [MissionState.IDLE, MissionState.COMPLETED, MissionState.ABORTED, MissionState.ERROR] 
                    for m in self.drone_missions.values())
     
-    def calculate_drones_needed(self, mission_duration_hours: float = 1.0, battery_swap_time: float = 180.0) -> Tuple[int, float, float]:
+    def calculate_drones_needed(self, mission_duration_hours: float = 1.0, battery_swap_time: float = 180.0) -> Tuple[int, int, float, float, bool]:
         """
         Calculate minimum drones needed for continuous coverage.
         
@@ -911,11 +1033,34 @@ class MissionController:
             battery_swap_time: Time in seconds to swap battery and reconnect (default 3 min)
         
         Returns:
-            Tuple of (drones_needed, estimated_travel_time_seconds, distance_meters)
-            drones_needed is float('inf') if point is too far
+            Tuple of (drones_simultaneous, drones_total, travel_time_seconds, distance_meters, is_from_actual_data)
+            - drones_simultaneous: min drones flying at the same time for continuous coverage
+            - drones_total: total drones needed in rotation (including those on ground swapping batteries)
+            - drones values are float('inf') if point is too far
+            - is_from_actual_data is True if calculation used actual flight data
         """
-        # Assume average flight time of 25 minutes (1500 seconds) for DJI drones
-        avg_flight_time = 1500  # seconds
+        # Check if we have actual data from completed flights
+        has_actual_data = len(self.travel_time_history) > 0 or len(self.flight_time_history) > 0
+        
+        # Get average flight time - prefer actual history, then drone telemetry, then default
+        avg_flight_time = self.get_average_flight_time()
+        
+        if avg_flight_time == 0:
+            # Try to get from connected drone's remaining flight time
+            if self.get_remaining_flight_time and self.get_connected_drones:
+                connected = self.get_connected_drones()
+                if connected:
+                    max_flight_time = 0
+                    for ns in connected:
+                        remaining = self.get_remaining_flight_time(ns)
+                        if remaining > max_flight_time:
+                            max_flight_time = remaining
+                    if max_flight_time > 0:
+                        avg_flight_time = max_flight_time
+            
+            # Final fallback: assume 25 minutes
+            if avg_flight_time == 0:
+                avg_flight_time = 1500  # 25 minutes
         
         # Get list of drones to check - use drone_order if mission active, else get connected drones
         drones_to_check = self.drone_order if self.drone_order else []
@@ -941,7 +1086,7 @@ class MissionController:
                 distance = self.haversine_distance(lat, lon, 
                     self.config.monitoring_lat, self.config.monitoring_lon)
         
-        # Get average travel time - prefer from history, else estimate from distance
+        # Get average travel time - prefer from actual flight history
         avg_travel = self.get_average_travel_time()
         
         if avg_travel == 0:
@@ -949,24 +1094,30 @@ class MissionController:
                 avg_travel = self.estimate_travel_time(distance)
             else:
                 # Last fallback
+                has_actual_data = False
                 avg_travel = 300  # Assume 5 minutes
                 distance = 3000  # ~3km at 10m/s
         
         # Effective monitoring time per drone (time actually spent at monitoring point)
+        # Formula: flight_time - travel_out - travel_back - safety_buffer
         effective_monitoring = avg_flight_time - (2 * avg_travel) - self.config.safety_buffer_seconds
         
         if effective_monitoring <= 0:
-            return (float('inf'), avg_travel, distance)  # Impossible - point too far
+            return (float('inf'), float('inf'), avg_travel, distance, has_actual_data)  # Impossible - point too far
+        
+        # Calculate drones flying simultaneously:
+        # Need to launch next drone when: remaining_time <= travel_time + safety_buffer
+        # So next drone must be in the air (travel_time + safety_buffer) before current drone leaves
+        # If travel_time >= effective_monitoring, we need multiple drones in transit
+        drones_simultaneous = max(1, math.ceil(avg_travel / effective_monitoring)) + 1
         
         # Full cycle time: fly out + monitor + fly back + swap battery
         cycle_time = avg_flight_time + battery_swap_time
         
-        # For continuous coverage, we need enough drones so that when drone N 
-        # needs to leave, drone N+1 is ready to take over.
-        # This means we need ceil(cycle_time / effective_monitoring) drones in rotation.
-        drones_needed = max(2, math.ceil(cycle_time / effective_monitoring))
+        # Total drones in rotation (including those swapping batteries)
+        drones_total = max(drones_simultaneous, math.ceil(cycle_time / effective_monitoring))
         
-        return (drones_needed, avg_travel, distance)
+        return (drones_simultaneous, drones_total, avg_travel, distance, has_actual_data)
     
     def shutdown(self):
         """Shutdown the mission controller."""

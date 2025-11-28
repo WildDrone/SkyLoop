@@ -23,7 +23,7 @@ import ast
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64, Bool, Empty, String, Float64MultiArray
+from std_msgs.msg import Float64, Bool, Empty, String, Float64MultiArray, Int32
 from sensor_msgs.msg import NavSatFix
 
 from nicegui import ui, app, ui_run
@@ -602,8 +602,8 @@ class PerpetualMonitorNode(Node):
         
         # Satellite count
         self.drone_subscribers[namespace]['satellites'] = self.create_subscription(
-            Float64, f"{namespace}/satellite_count",
-            lambda msg, ns=namespace: self._on_satellite_count(ns, int(msg.data)), 10
+            Int32, f"{namespace}/satellite_count",
+            lambda msg, ns=namespace: self._on_satellite_count(ns, msg.data), 10
         )
         
         # Gimbal pitch
@@ -655,6 +655,11 @@ class PerpetualMonitorNode(Node):
         # RTH altitude
         self.drone_publishers[namespace]['set_rth_altitude'] = self.create_publisher(
             Float64, f"{namespace}/command/set_rth_altitude", 10
+        )
+        
+        # Yaw command
+        self.drone_publishers[namespace]['goto_yaw'] = self.create_publisher(
+            Float64, f"{namespace}/command/goto_yaw", 10
         )
     
     # ========================================================================
@@ -1020,9 +1025,12 @@ class PerpetualMonitorNode(Node):
             self.get_logger().error("Cannot start relay: monitoring point not set")
             return False
         
-        if len(drone_list) < 2:
-            self.get_logger().error("Need at least 2 drones for relay mission")
+        if len(drone_list) < 1:
+            self.get_logger().error("Need at least 1 drone for relay mission")
             return False
+        
+        if len(drone_list) == 1:
+            self.get_logger().warning("Starting relay with 1 drone - more drones should connect before battery runs low")
         
         # Validate all drones exist
         for ns in drone_list:
