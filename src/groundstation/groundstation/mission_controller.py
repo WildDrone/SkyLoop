@@ -63,6 +63,7 @@ class DroneMissionStatus:
     namespace: str
     state: MissionState = MissionState.IDLE
     assigned_altitude: float = 50.0
+    target_heading: float = 0.0  # Target heading when reaching monitoring point
     
     # Timing
     mission_start_time: float = 0.0
@@ -88,6 +89,7 @@ class RelayMissionConfig:
     monitoring_lat: float = 0.0
     monitoring_lon: float = 0.0
     monitoring_alt: float = 50.0
+    monitoring_heading: float = 0.0  # Target heading/yaw at monitoring point (degrees)
     
     base_rth_altitude: float = 50.0
     altitude_separation: float = 15.0
@@ -133,16 +135,21 @@ class MissionController:
         self.drone_order: List[str] = []  # Order for relay
         self.current_drone_index: int = 0
         
+        # Navigation mode: False = PID (5 m/s), True = DJI Native (10 m/s)
+        self.use_dji_native: bool = False
+        
         # Callbacks for drone commands (set by ROS node)
         self.cmd_takeoff: Optional[Callable[[str], None]] = None
         self.cmd_land: Optional[Callable[[str], None]] = None
         self.cmd_rth: Optional[Callable[[str], None]] = None
         self.cmd_goto_waypoint: Optional[Callable[[str, float, float, float, float], None]] = None
+        self.cmd_goto_waypoint_dji_native: Optional[Callable[[str, float, float, float], None]] = None  # DJI Native mode
         self.cmd_goto_altitude: Optional[Callable[[str, float], None]] = None
         self.cmd_set_rth_altitude: Optional[Callable[[str, float], None]] = None
         self.cmd_start_recording: Optional[Callable[[str], None]] = None
         self.cmd_stop_recording: Optional[Callable[[str], None]] = None
         self.cmd_set_gimbal_pitch: Optional[Callable[[str, float], None]] = None
+        self.cmd_goto_yaw: Optional[Callable[[str, float], None]] = None  # Set drone heading
         self.cmd_abort: Optional[Callable[[str], None]] = None
         
         # Telemetry getters (set by ROS node)
@@ -156,6 +163,8 @@ class MissionController:
         self.get_is_recording: Optional[Callable[[str], bool]] = None
         self.get_waypoint_reached: Optional[Callable[[str], bool]] = None
         self.get_altitude_reached: Optional[Callable[[str], bool]] = None
+        self.get_configured_speed: Optional[Callable[[], float]] = None  # Get UI-configured speed
+        self.get_connected_drones: Optional[Callable[[], List[str]]] = None  # Get list of connected drone namespaces
         
         # Status callback (for GUI updates)
         self.on_status_update: Optional[Callable[[str, MissionState, str], None]] = None
@@ -224,8 +233,15 @@ class MissionController:
         if vertical_speed is None:
             vertical_speed = self.VERTICAL_SPEED
         if horizontal_speed is None:
-            # Use conservative PID speed by default for safety margin
-            horizontal_speed = self.HORIZONTAL_SPEED_PID
+            # First try to get speed from UI configuration
+            if self.get_configured_speed:
+                horizontal_speed = self.get_configured_speed()
+            else:
+                # Fallback to defaults based on navigation mode
+                if self.use_dji_native:
+                    horizontal_speed = self.HORIZONTAL_SPEED_NATIVE
+                else:
+                    horizontal_speed = self.HORIZONTAL_SPEED_PID
         
         if horizontal_speed <= 0:
             return float('inf')
@@ -360,11 +376,15 @@ class MissionController:
         """
         Start a perpetual monitoring mission with relay drones.
         
+        Can start with 1 drone - additional drones can join later.
         Each subsequent drone flies at altitude +15m from the previous.
         """
-        if len(drone_list) < 2:
-            logger.error("Need at least 2 drones for relay mission")
+        if len(drone_list) < 1:
+            logger.error("Need at least 1 drone for relay mission")
             return False
+        
+        if len(drone_list) == 1:
+            logger.warning("Starting relay with 1 drone - more drones should connect before battery runs low")
         
         # Configure mission
         self.config.monitoring_lat = monitoring_lat
@@ -439,6 +459,50 @@ class MissionController:
             mission.state = MissionState.ABORTED
             self._emit_event(namespace, "Mission aborted")
     
+    def add_drone_to_relay(self, namespace: str) -> bool:
+        """
+        Add a new drone to an ongoing relay mission.
+        
+        The drone will be queued and take over when the current drone's battery gets low.
+        
+        Args:
+            namespace: The drone namespace to add
+            
+        Returns:
+            True if drone was added, False otherwise
+        """
+        if self.relay_state != RelayState.ACTIVE:
+            logger.warning(f"Cannot add drone {namespace} - no active relay mission")
+            return False
+        
+        if namespace in self.drone_missions:
+            logger.warning(f"Drone {namespace} already in relay mission")
+            return False
+        
+        # Assign altitude: base + (position in order * separation)
+        # New drones go at the end of the queue
+        position = len(self.drone_order)
+        altitude = self.config.base_rth_altitude + (position * self.config.altitude_separation)
+        
+        # Add to mission tracking
+        self.drone_missions[namespace] = DroneMissionStatus(
+            namespace=namespace,
+            state=MissionState.IDLE,  # Will be activated when needed
+            assigned_altitude=altitude
+        )
+        
+        # Add to relay order
+        self.drone_order.append(namespace)
+        
+        self._emit_event(namespace, f"Added to relay queue (position {position + 1}, alt {altitude}m)")
+        logger.info(f"Drone {namespace} added to relay mission at position {position + 1}")
+        
+        return True
+    
+    def is_drone_in_mission(self, namespace: str) -> bool:
+        """Check if a drone is part of the current mission."""
+        return namespace in self.drone_missions
+
     # ========================================================================
     # MISSION STATE MACHINE
     # ========================================================================
@@ -476,8 +540,13 @@ class MissionController:
         
         elif mission.state == MissionState.TAKING_OFF:
             if self.cmd_takeoff:
+                # Send takeoff command twice for reliability
+                self.cmd_takeoff(namespace)
+                time.sleep(2.0)
                 self.cmd_takeoff(namespace)
             
+            # Wait 5 seconds before transitioning to climbing
+            time.sleep(5.0)
             mission.state = MissionState.CLIMBING_TO_ALTITUDE
             self._update_status(namespace, mission.state, "Taking off...")
         
@@ -487,6 +556,8 @@ class MissionController:
                 _, _, alt = self.get_drone_position(namespace)
                 
                 if alt >= (mission.assigned_altitude - self.config.altitude_tolerance):
+                    # Wait 5 seconds before starting transit
+                    time.sleep(5.0)
                     # Altitude reached, start transit
                     mission.state = MissionState.TRANSIT_TO_MONITORING
                     mission.transit_start_time = time.time()
@@ -524,34 +595,88 @@ class MissionController:
             pass
     
     def _start_transit(self, namespace: str, mission: DroneMissionStatus):
-        """Start transit to monitoring point."""
-        if self.get_drone_position:
-            lat, lon, _ = self.get_drone_position(namespace)
+        """Start transit to monitoring point (or current monitoring drone's position for relay)."""
+        if not self.get_drone_position:
+            return
             
-            # Calculate bearing to target
-            bearing = self.calculate_bearing(
-                lat, lon,
-                self.config.monitoring_lat, self.config.monitoring_lon
+        lat, lon, _ = self.get_drone_position(namespace)
+        
+        # Determine target position
+        # For relay missions, fly to where the current monitoring drone is (not just the config point)
+        target_lat = self.config.monitoring_lat
+        target_lon = self.config.monitoring_lon
+        # Use the drone's assigned altitude (which includes vertical separation for safety)
+        target_alt = mission.assigned_altitude
+        
+        if self.relay_state == RelayState.ACTIVE:
+            # Find the currently monitoring drone and use its position (but keep our assigned altitude!)
+            current_monitoring_ns = self._get_currently_monitoring_drone(exclude=namespace)
+            if current_monitoring_ns and self.get_drone_position:
+                mon_lat, mon_lon, _ = self.get_drone_position(current_monitoring_ns)
+                if mon_lat != 0.0 or mon_lon != 0.0:
+                    target_lat = mon_lat
+                    target_lon = mon_lon
+                    # Keep target_alt as mission.assigned_altitude for vertical separation!
+                    self._emit_event(namespace, f"Target: current position of {current_monitoring_ns}")
+        
+        # Calculate bearing to target
+        bearing = self.calculate_bearing(lat, lon, target_lat, target_lon)
+        
+        # Determine target heading: use monitoring drone's heading for relay, or configured heading
+        target_heading = self.config.monitoring_heading
+        if self.relay_state == RelayState.ACTIVE:
+            current_monitoring_ns = self._get_currently_monitoring_drone(exclude=namespace)
+            if current_monitoring_ns and self.get_drone_heading:
+                # Sync heading from currently monitoring drone
+                target_heading = self.get_drone_heading(current_monitoring_ns)
+                self._emit_event(namespace, f"Target heading synced to {target_heading:.1f}° from {current_monitoring_ns}")
+        
+        # Store target heading for use when reaching destination
+        mission.target_heading = target_heading
+        
+        # Estimate travel time
+        distance = self.haversine_distance(lat, lon, target_lat, target_lon)
+        mission.estimated_travel_time = self.estimate_travel_time(distance)
+        
+        # Send waypoint command (PID or DJI Native based on setting)
+        if self.use_dji_native and self.cmd_goto_waypoint_dji_native:
+            # DJI Native: faster but needs separate yaw command after arrival
+            self.cmd_goto_waypoint_dji_native(
+                namespace,
+                target_lat,
+                target_lon,
+                target_alt
             )
-            
-            # Estimate travel time
-            distance = self.haversine_distance(
-                lat, lon,
-                self.config.monitoring_lat, self.config.monitoring_lon
+            mode_str = "DJI Native"
+        elif self.cmd_goto_waypoint:
+            # PID: includes yaw control, use target heading
+            self.cmd_goto_waypoint(
+                namespace,
+                target_lat,
+                target_lon,
+                target_alt,
+                target_heading  # Use configured/synced heading instead of bearing
             )
-            mission.estimated_travel_time = self.estimate_travel_time(distance)
+            mode_str = "PID"
+        else:
+            mode_str = "unknown"
+        
+        self._emit_event(namespace, f"Transit to monitoring point ({distance:.0f}m, ~{mission.estimated_travel_time:.0f}s) [{mode_str}] heading={target_heading:.0f}°")
+    
+    def _get_currently_monitoring_drone(self, exclude: str = None) -> Optional[str]:
+        """
+        Get the namespace of the drone currently in MONITORING state.
+        
+        Args:
+            exclude: Optional namespace to exclude (typically the incoming relay drone)
             
-            # Send waypoint command
-            if self.cmd_goto_waypoint:
-                self.cmd_goto_waypoint(
-                    namespace,
-                    self.config.monitoring_lat,
-                    self.config.monitoring_lon,
-                    self.config.monitoring_alt,
-                    bearing
-                )
-            
-            self._emit_event(namespace, f"Transit to monitoring point ({distance:.0f}m, ~{mission.estimated_travel_time:.0f}s)")
+        Returns:
+            Namespace of the monitoring drone, or None if no drone is monitoring
+        """
+        for ns, mission in self.drone_missions.items():
+            if ns != exclude and mission.state == MissionState.MONITORING:
+                return ns
+        return None
     
     def _check_approach(self, namespace: str, mission: DroneMissionStatus):
         """Check if drone is approaching video trigger distance."""
@@ -559,10 +684,21 @@ class MissionController:
             return
         
         lat, lon, _ = self.get_drone_position(namespace)
-        distance = self.haversine_distance(
-            lat, lon,
-            self.config.monitoring_lat, self.config.monitoring_lon
-        )
+        
+        # Determine target position for distance calculation
+        # For relay missions, use the monitoring drone's position
+        target_lat = self.config.monitoring_lat
+        target_lon = self.config.monitoring_lon
+        
+        if self.relay_state == RelayState.ACTIVE:
+            current_monitoring_ns = self._get_currently_monitoring_drone(exclude=namespace)
+            if current_monitoring_ns and self.get_drone_position:
+                mon_lat, mon_lon, _ = self.get_drone_position(current_monitoring_ns)
+                if mon_lat != 0.0 or mon_lon != 0.0:
+                    target_lat = mon_lat
+                    target_lon = mon_lon
+        
+        distance = self.haversine_distance(lat, lon, target_lat, target_lon)
         
         # Check if within video trigger distance
         if distance <= mission.video_trigger_distance and not mission.video_started:
@@ -585,6 +721,11 @@ class MissionController:
                 if self.cmd_start_recording:
                     self.cmd_start_recording(namespace)
                 mission.video_started = True
+            
+            # For DJI Native mode, send go-to-yaw command to achieve target heading
+            if self.use_dji_native and self.cmd_goto_yaw:
+                self.cmd_goto_yaw(namespace, mission.target_heading)
+                self._emit_event(namespace, f"Setting heading to {mission.target_heading:.0f}°")
             
             mission.state = MissionState.MONITORING
             mission.monitoring_start_time = time.time()
@@ -776,31 +917,38 @@ class MissionController:
         # Assume average flight time of 25 minutes (1500 seconds) for DJI drones
         avg_flight_time = 1500  # seconds
         
-        # Get average travel time - prefer from history, else estimate from home position
-        avg_travel = self.get_average_travel_time()
+        # Get list of drones to check - use drone_order if mission active, else get connected drones
+        drones_to_check = self.drone_order if self.drone_order else []
+        if not drones_to_check and self.get_connected_drones:
+            drones_to_check = self.get_connected_drones()
+        
+        # Always calculate distance from drone home/position to monitoring point
         distance = 0.0
+        if self.get_drone_home_position and drones_to_check:
+            first_drone = drones_to_check[0]
+            home_lat, home_lon = self.get_drone_home_position(first_drone)
+            # Require both lat AND lon to be non-zero (valid GPS, not default 0,0)
+            if home_lat != 0.0 and home_lon != 0.0:
+                distance = self.haversine_distance(home_lat, home_lon, 
+                    self.config.monitoring_lat, self.config.monitoring_lon)
+        
+        # Fallback: try current drone position if no home set
+        if distance == 0.0 and self.get_drone_position and drones_to_check:
+            first_drone = drones_to_check[0]
+            lat, lon, _ = self.get_drone_position(first_drone)
+            # Require both lat AND lon to be non-zero
+            if lat != 0.0 and lon != 0.0:
+                distance = self.haversine_distance(lat, lon, 
+                    self.config.monitoring_lat, self.config.monitoring_lon)
+        
+        # Get average travel time - prefer from history, else estimate from distance
+        avg_travel = self.get_average_travel_time()
         
         if avg_travel == 0:
-            # Estimate based on home position (not current position)
-            if self.get_drone_home_position and self.drone_order:
-                first_drone = self.drone_order[0]
-                home_lat, home_lon = self.get_drone_home_position(first_drone)
-                if home_lat != 0.0 or home_lon != 0.0:
-                    distance = self.haversine_distance(home_lat, home_lon, 
-                        self.config.monitoring_lat, self.config.monitoring_lon)
-                    avg_travel = self.estimate_travel_time(distance)
-            
-            # Fallback: try current drone position if no home set
-            if avg_travel == 0 and self.get_drone_position and self.drone_order:
-                first_drone = self.drone_order[0]
-                lat, lon, _ = self.get_drone_position(first_drone)
-                if lat != 0.0 or lon != 0.0:
-                    distance = self.haversine_distance(lat, lon, 
-                        self.config.monitoring_lat, self.config.monitoring_lon)
-                    avg_travel = self.estimate_travel_time(distance)
-            
-            # Last fallback
-            if avg_travel == 0:
+            if distance > 0:
+                avg_travel = self.estimate_travel_time(distance)
+            else:
+                # Last fallback
                 avg_travel = 300  # Assume 5 minutes
                 distance = 3000  # ~3km at 10m/s
         

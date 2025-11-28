@@ -302,11 +302,13 @@ class PerpetualMonitorNode(Node):
         mc.cmd_land = self.send_land
         mc.cmd_rth = self.send_rth
         mc.cmd_goto_waypoint = self.send_goto_waypoint
+        mc.cmd_goto_waypoint_dji_native = self.send_goto_waypoint_dji_native
         mc.cmd_goto_altitude = self.send_goto_altitude
         mc.cmd_set_rth_altitude = self.send_set_rth_altitude
         mc.cmd_start_recording = self.send_start_recording
         mc.cmd_stop_recording = self.send_stop_recording
         mc.cmd_set_gimbal_pitch = self.send_gimbal_pitch
+        mc.cmd_goto_yaw = self.send_goto_yaw
         mc.cmd_abort = self.send_abort_mission
         
         # Telemetry getters
@@ -329,6 +331,8 @@ class PerpetualMonitorNode(Node):
         mc.get_is_recording = lambda ns: self.drones[ns].is_recording if ns in self.drones else False
         mc.get_waypoint_reached = lambda ns: self.drones[ns].waypoint_reached if ns in self.drones else False
         mc.get_altitude_reached = lambda ns: self.drones[ns].altitude_reached if ns in self.drones else False
+        mc.get_configured_speed = lambda: self.DJI_NATIVE_SPEED if mc.use_dji_native else self.PID_SPEED
+        mc.get_connected_drones = lambda: list(self.drones.keys())
         
         # Status callbacks
         mc.on_status_update = self._on_mission_status_update
@@ -448,6 +452,9 @@ class PerpetualMonitorNode(Node):
         # If this drone is part of an active relay mission, reset its state for reuse
         if self.mission_controller.reset_drone_for_reuse(namespace):
             self.get_logger().info(f"Drone {namespace} reset for relay reuse")
+        # Otherwise, if there's an active relay and this is a new drone, add it to the relay
+        elif self.mission_controller.add_drone_to_relay(namespace):
+            self.get_logger().info(f"Drone {namespace} automatically added to active relay mission")
         
         # Notify UI
         if self.ui_handler:
@@ -765,14 +772,72 @@ class PerpetualMonitorNode(Node):
             self.drones[namespace].mission_phase = MissionPhase.NONE
             self.get_logger().info(f"Abort mission command sent to {namespace}")
     
-    def send_goto_waypoint(self, namespace: str, lat: float, lon: float, alt: float, yaw: float = 0.0):
-        """Command a drone to go to a waypoint."""
+    # PID control speed (m/s) - can be set from UI
+    PID_SPEED = 5.0
+    
+    def send_goto_waypoint(self, namespace: str, lat: float, lon: float, alt: float, yaw: float = 0.0, speed: float = None):
+        """Command a drone to go to a waypoint using PID control.
+        
+        Args:
+            namespace: Drone namespace
+            lat: Target latitude
+            lon: Target longitude
+            alt: Target altitude
+            yaw: Target yaw angle
+            speed: Max speed in m/s (default: PID_SPEED = 5.0)
+        """
+        if speed is None:
+            speed = self.PID_SPEED
+            
         if namespace in self.drone_publishers:
             msg = Float64MultiArray()
-            msg.data = [lat, lon, alt, yaw]
+            msg.data = [lat, lon, alt, yaw, speed]
             self.drone_publishers[namespace]['goto_waypoint'].publish(msg)
             self.drones[namespace].state = DroneState.FLYING_TO_POINT
-            self.get_logger().info(f"Goto waypoint command sent to {namespace}: ({lat}, {lon}, {alt})")
+            self.get_logger().info(f"Goto waypoint [PID @ {speed}m/s] sent to {namespace}: ({lat}, {lon}, {alt})")
+    
+    # DJI Native trajectory speed (m/s)
+    DJI_NATIVE_SPEED = 10.0
+    
+    def send_goto_waypoint_dji_native(self, namespace: str, lat: float, lon: float, alt: float, speed: float = None):
+        """Command a drone to go to a waypoint using DJI Native mode.
+        
+        Generates 3 evenly-spaced waypoints along the path for smoother flight.
+        
+        Args:
+            namespace: Drone namespace
+            lat: Target latitude
+            lon: Target longitude  
+            alt: Target altitude
+            speed: Flight speed in m/s (default: DJI_NATIVE_SPEED = 10.0)
+        """
+        if speed is None:
+            speed = self.DJI_NATIVE_SPEED
+            
+        if namespace in self.drone_publishers and namespace in self.drones:
+            drone = self.drones[namespace]
+            start_lat = drone.latitude
+            start_lon = drone.longitude
+            start_alt = drone.altitude
+            
+            # Generate 3 waypoints evenly spaced along the line
+            # Waypoint 1: 1/3 of the way
+            # Waypoint 2: 2/3 of the way  
+            # Waypoint 3: destination
+            waypoints = []
+            for i in range(1, 4):  # 1, 2, 3
+                fraction = i / 3.0
+                wp_lat = start_lat + (lat - start_lat) * fraction
+                wp_lon = start_lon + (lon - start_lon) * fraction
+                wp_alt = start_alt + (alt - start_alt) * fraction
+                waypoints.append((wp_lat, wp_lon, wp_alt))
+            
+            # Send as tuple: (speed, waypoints)
+            msg = String()
+            msg.data = str((speed, waypoints))
+            self.drone_publishers[namespace]['goto_trajectory_dji_native'].publish(msg)
+            self.drones[namespace].state = DroneState.FLYING_TO_POINT
+            self.get_logger().info(f"Goto waypoint [DJI Native @ {speed}m/s] sent to {namespace}: 3 waypoints to ({lat}, {lon}, {alt})")
     
     def send_goto_altitude(self, namespace: str, altitude: float):
         """Command a drone to go to a specific altitude."""
@@ -816,6 +881,14 @@ class PerpetualMonitorNode(Node):
             msg.data = yaw
             self.drone_publishers[namespace]['gimbal_yaw'].publish(msg)
     
+    def send_goto_yaw(self, namespace: str, yaw: float):
+        """Command drone to rotate to a specific heading/yaw."""
+        if namespace in self.drone_publishers:
+            msg = Float64()
+            msg.data = yaw
+            self.drone_publishers[namespace]['goto_yaw'].publish(msg)
+            self.get_logger().info(f"Goto yaw command sent to {namespace}: {yaw}°")
+    
     def send_trajectory(self, namespace: str, waypoints: List[Tuple[float, float, float]], final_yaw: float = 0.0):
         """
         Send a trajectory (list of waypoints) to a drone.
@@ -847,8 +920,8 @@ class PerpetualMonitorNode(Node):
     # MONITORING POINT MANAGEMENT
     # ========================================================================
     
-    def set_monitoring_point(self, lat: float, lon: float, alt: float = 50.0, source: str = "manual"):
-        """Set the monitoring GPS point."""
+    def set_monitoring_point(self, lat: float, lon: float, alt: float = 50.0, heading: float = 0.0, source: str = "manual"):
+        """Set the monitoring GPS point and target heading."""
         self.monitoring_point = MonitoringPoint(
             latitude=lat,
             longitude=lon,
@@ -858,7 +931,14 @@ class PerpetualMonitorNode(Node):
         )
         self.mission.monitoring_point = self.monitoring_point
         
-        self.get_logger().info(f"Monitoring point set: ({lat}, {lon}, {alt}) from {source}")
+        # Update mission controller config for distance calculations
+        if hasattr(self, 'mission_controller'):
+            self.mission_controller.config.monitoring_lat = lat
+            self.mission_controller.config.monitoring_lon = lon
+            self.mission_controller.config.monitoring_alt = alt
+            self.mission_controller.config.monitoring_heading = heading
+        
+        self.get_logger().info(f"Monitoring point set: ({lat}, {lon}, {alt}) heading={heading}° from {source}")
         
         if self.ui_handler:
             self.ui_handler.update_monitoring_point(lat, lon, alt)

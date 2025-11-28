@@ -161,9 +161,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.lat_input = None
         self.lon_input = None
         self.alt_input = None
+        self.heading_input = None
         self.rth_alt_input = None
         self.safety_buffer_input = None
+        self.min_battery_input = None
+        self.min_satellites_input = None
         self.trajectory_mode = None
+        self.trajectory_speed_slider = None
+        self.trajectory_speed_label = None
         
         # Map settings
         self.map_center = (0.025324, 36.868363)  # Default center
@@ -272,6 +277,16 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     'drone': self.drones[ns]
                 })
                 self._emit_log(f"[CONNECTED] {ns} at {ip_address}")
+                
+                # Check if drone was auto-added to relay
+                if self.mission_controller.is_drone_in_mission(ns):
+                    position = len(self.mission_controller.drone_order)
+                    ui.notify(
+                        f'{ns} auto-added to relay queue (position {position})',
+                        type='positive',
+                        timeout=5000
+                    )
+                    self._emit_log(f"[RELAY] {ns} auto-joined relay mission")
         return result
     
     def disconnect_drone(self, namespace: str) -> bool:
@@ -282,15 +297,16 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._emit_log(f"[DISCONNECTED] {namespace}")
         return result
     
-    def set_monitoring_point(self, lat: float, lon: float, alt: float, source: str = "manual"):
+    def set_monitoring_point(self, lat: float, lon: float, alt: float, heading: float = 0.0, source: str = "manual"):
         """Override to emit event."""
-        super().set_monitoring_point(lat, lon, alt, source)
+        super().set_monitoring_point(lat, lon, alt, heading, source)
         self.monitoring_point_update.emit({
             'lat': lat,
             'lon': lon,
-            'alt': alt
+            'alt': alt,
+            'heading': heading
         })
-        self._emit_log(f"[POINT] Set: ({lat:.6f}, {lon:.6f}, {alt:.1f}m)")
+        self._emit_log(f"[POINT] Set: ({lat:.6f}, {lon:.6f}, {alt:.1f}m) heading={heading:.0f}°")
     
     def clear_monitoring_point(self):
         """Override to emit event."""
@@ -577,17 +593,19 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             # Connection form
             with ui.expansion("Add New Drone", icon='add_circle').classes('w-full'):
-                with ui.row().classes('w-full items-end gap-2'):
-                    self.ip_input = ui.input(
-                        label='IP Address',
-                        placeholder='192.168.x.x',
-                        validation={'Invalid IP': lambda v: self._validate_ip(v)}
-                    ).classes('flex-grow')
+                with ui.row().classes('w-full gap-2'):
+                    with ui.column().classes('flex-grow'):
+                        self.ip_input = ui.input(
+                            label='IP Address',
+                            placeholder='192.168.x.x',
+                            validation={'Invalid IP': lambda v: self._validate_ip(v)}
+                        ).classes('w-full')
                     
-                    self.namespace_input = ui.input(
-                        label='Name',
-                        placeholder='drone_1'
-                    ).style('width: 100px')
+                    with ui.column().style('width: 100px'):
+                        self.namespace_input = ui.input(
+                            label='Name',
+                            placeholder='drone_1'
+                        ).classes('w-full')
                 
                 with ui.row().classes('w-full gap-2 mt-2'):
                     ui.button('Connect', icon='link', on_click=self._connect_drone_ui).props('color=primary')
@@ -658,6 +676,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self.lat_input = ui.input(label='Lat', value='0.0').style('width: 100px')
                         self.lon_input = ui.input(label='Lon', value='0.0').style('width: 100px')
                         self.alt_input = ui.input(label='Alt (m)', value='50').style('width: 80px')
+                        self.heading_input = ui.input(label='Heading (°)', value='0').style('width: 90px').tooltip('Target drone heading at monitoring point (0-360°)')
                         ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('color=primary dense').tooltip('Set Point')
                         ui.button(icon='delete', on_click=self._clear_monitoring_point_ui).props('dense').tooltip('Clear')
                     
@@ -675,6 +694,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self.rth_alt_input = ui.input(label='RTH Alt (m)', value='50').style('width: 100px')
                         self.safety_buffer_input = ui.input(label='Buffer (s)', value='60').style('width: 80px')
                     
+                    with ui.row().classes('w-full gap-2 items-end'):
+                        self.min_battery_input = ui.input(label='Min Battery (%)', value='30').style('width: 110px')
+                        self.min_satellites_input = ui.input(label='Min Sats', value='8').style('width: 80px')
+                    
                     with ui.row().classes('w-full gap-2 mt-2'):
                         ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green').tooltip('Start single drone mission')
                         ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary').tooltip('Start relay mission')
@@ -688,11 +711,20 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     
                     self.trajectory_mode = ui.toggle(
                         ['PID', 'DJI Native'], 
-                        value='PID'
+                        value='PID',
+                        on_change=self._on_trajectory_mode_change
                     ).props('dense')
                     
+                    # Speed slider for DJI Native mode
+                    with ui.row().classes('w-full items-center gap-2 mt-2'):
+                        ui.icon('speed').classes('text-lg')
+                        self.trajectory_speed_slider = ui.slider(
+                            min=1, max=12, value=10, step=1,
+                            on_change=self._on_trajectory_speed_change
+                        ).props('dense label').classes('flex-grow')
+                        self.trajectory_speed_label = ui.label('10 m/s').classes('text-sm font-mono w-16')
+                    
                     with ui.row().classes('w-full gap-2 mt-2'):
-                        ui.button('Go to Point', icon='near_me', on_click=self._goto_point_selected).props('dense')
                         ui.button('Abort', icon='cancel', on_click=self._abort_trajectories).props('dense color=red')
             
             # Event Log
@@ -864,11 +896,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             travel_sec = int(travel_time % 60)
             distance_km = distance / 1000
             
-            if needed == float('inf'):
+            connected = len(self.drones)
+            
+            # Check if we have a valid distance (not fallback 3km/5min)
+            is_fallback = (distance == 3000 and travel_time == 300)
+            
+            if is_fallback:
+                self.drones_needed_label.text = f"Waiting for drone GPS... ({connected} connected)"
+                self.drones_needed_label.style('color: #757575;')  # grey
+            elif needed == float('inf'):
                 self.drones_needed_label.text = f"Point too far! ({distance_km:.1f}km, {travel_min}:{travel_sec:02d} travel)"
                 self.drones_needed_label.style('color: #c62828;')  # error red
             else:
-                connected = len(self.drones)
                 info = f"Need {needed} drones ({distance_km:.1f}km, ~{travel_min}min travel)"
                 if connected >= needed:
                     self.drones_needed_label.text = f"{info} ✓ {connected} connected"
@@ -896,7 +935,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         except ValueError:
             alt = 50.0
         
-        self.set_monitoring_point(lat, lon, alt, source="map")
+        try:
+            heading = float(self.heading_input.value) if self.heading_input else 0.0
+            heading = heading % 360
+        except ValueError:
+            heading = 0.0
+        
+        self.set_monitoring_point(lat, lon, alt, heading, source="map")
         
         self.lat_input.value = f"{lat:.6f}"
         self.lon_input.value = f"{lon:.6f}"
@@ -910,9 +955,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             lat = float(self.lat_input.value)
             lon = float(self.lon_input.value)
             alt = float(self.alt_input.value)
+            heading = float(self.heading_input.value) if self.heading_input else 0.0
             
-            self.set_monitoring_point(lat, lon, alt, source="manual")
-            ui.notify(f'Monitoring point set', type='positive')
+            # Normalize heading to 0-360
+            heading = heading % 360
+            
+            self.set_monitoring_point(lat, lon, alt, heading, source="manual")
+            ui.notify(f'Monitoring point set (heading={heading:.0f}°)', type='positive')
             self._update_drones_needed()
         except ValueError:
             ui.notify('Invalid coordinates', type='warning')
@@ -941,6 +990,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         except ValueError:
             rth_alt = 50.0
         
+        try:
+            min_battery = float(self.min_battery_input.value)
+            self.mission_controller.config.min_battery_to_launch = min_battery
+        except ValueError:
+            pass
+        
+        try:
+            min_sats = int(self.min_satellites_input.value)
+            self.mission_controller.config.min_satellites = min_sats
+        except ValueError:
+            pass
+        
         if self.start_monitoring_mission(drone_ns, rth_alt):
             # Reset mission timer (will start when drone reaches monitoring point)
             self._stop_mission_timer()
@@ -962,9 +1023,17 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify('Please set a monitoring point first', type='warning')
             return
         
-        if len(self.drones) < 2:
-            ui.notify('Need at least 2 drones for relay mission', type='warning')
+        if len(self.drones) < 1:
+            ui.notify('No drones connected', type='warning')
             return
+        
+        # Warn if only 1 drone - relay needs more drones to connect later
+        if len(self.drones) == 1:
+            ui.notify(
+                'Starting relay with 1 drone. Connect more drones before battery runs low!',
+                type='warning',
+                timeout=5000
+            )
         
         # Check if we have enough drones for the distance
         result = self.mission_controller.calculate_drones_needed()
@@ -994,6 +1063,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         try:
             buffer = float(self.safety_buffer_input.value)
             self.mission_controller.config.safety_buffer_seconds = buffer
+        except ValueError:
+            pass
+        
+        try:
+            min_battery = float(self.min_battery_input.value)
+            self.mission_controller.config.min_battery_to_launch = min_battery
+        except ValueError:
+            pass
+        
+        try:
+            min_sats = int(self.min_satellites_input.value)
+            self.mission_controller.config.min_satellites = min_sats
         except ValueError:
             pass
         
@@ -1044,29 +1125,33 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         ui.notify('Mission stopped', type='info')
         self._emit_log("Mission stopped - drones returning home")
     
-    def _goto_point_selected(self):
-        """Send selected drones to the monitoring point."""
-        if not self.monitoring_point.is_set:
-            ui.notify('Set a monitoring point first', type='warning')
-            return
+    def _on_trajectory_mode_change(self, e):
+        """Handle trajectory mode toggle change."""
+        use_dji_native = (e.value == 'DJI Native')
         
-        for namespace in self.drones.keys():
-            if self.trajectory_mode.value == 'DJI Native':
-                waypoints = [(
-                    self.monitoring_point.latitude,
-                    self.monitoring_point.longitude,
-                    self.monitoring_point.altitude
-                )]
-                self.send_trajectory_dji_native(namespace, waypoints)
-            else:
-                self.send_goto_waypoint(
-                    namespace,
-                    self.monitoring_point.latitude,
-                    self.monitoring_point.longitude,
-                    self.monitoring_point.altitude,
-                    0.0
-                )
-            self._emit_log(f"[NAV] {namespace} going to monitoring point")
+        # Update mission controller's navigation mode (self IS the ROS node)
+        if hasattr(self, 'mission_controller'):
+            self.mission_controller.use_dji_native = use_dji_native
+        
+        # Get current speed from slider
+        speed = self.trajectory_speed_slider.value if self.trajectory_speed_slider else 10
+        mode_name = f"DJI Native ({speed} m/s)" if use_dji_native else f"PID ({speed} m/s)"
+        ui.notify(f'Navigation mode: {mode_name}', type='info')
+        self._emit_log(f"[CONFIG] Navigation mode set to {mode_name}")
+    
+    def _on_trajectory_speed_change(self, e):
+        """Handle trajectory speed slider change."""
+        speed = e.value
+        
+        # Update label
+        if self.trajectory_speed_label:
+            self.trajectory_speed_label.set_text(f'{speed} m/s')
+        
+        # Update speed for both modes (self IS the ROS node)
+        self.DJI_NATIVE_SPEED = float(speed)
+        self.PID_SPEED = float(speed)
+        
+        self._emit_log(f"[CONFIG] Navigation speed set to {speed} m/s")
     
     def _abort_trajectories(self):
         """Abort all trajectories."""

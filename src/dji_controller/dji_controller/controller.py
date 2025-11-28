@@ -213,18 +213,22 @@ class DjiNode(Node):
         self.dji_interface.requestAbortDJINativeMission()
 
     def goto_waypoint_callback(self, msg: Float64MultiArray):
+        """Navigate to waypoint with PID control.
+        Expected: [lat, lon, alt, yaw] or [lat, lon, alt, yaw, speed]
+        """
         self.get_logger().info("Received goto waypoint command.")
         data = msg.data
-        if len(data) >= 4:  # Check if there are at least 4 elements
+        if len(data) >= 4:
             latitude, longitude, altitude, yaw = data[:4]
+            speed = data[4] if len(data) >= 5 else 5.0  # Default 5 m/s
             self.get_logger().info(
-                f'Received: {latitude}, {longitude}, {altitude}, {yaw}')
+                f'Received: lat={latitude}, lon={longitude}, alt={altitude}, yaw={yaw}, speed={speed}')
         else:
             self.get_logger().warning('Received an array with fewer than 4 elements.')
             return
 
         self.dji_interface.requestSendGoToWPwithPID(
-            latitude, longitude, altitude, yaw)
+            latitude, longitude, altitude, yaw, speed)
 
     def goto_waypoint_pid_tuning_callback(self, msg: Float64MultiArray):
         """Navigate to waypoint with custom PID tuning parameters.
@@ -262,12 +266,22 @@ class DjiNode(Node):
 
     def goto_trajectory_dji_native_callback(self, msg: String):
         """Navigate using DJI's native waypoint mission system.
-        Expected: list of [lat, lon, alt] tuples as string.
+        Expected format: "(speed, [(lat, lon, alt), (lat, lon, alt), ...])"
+        or legacy format: "[(lat, lon, alt), (lat, lon, alt), ...]"
         """
         self.get_logger().info("Received DJI native trajectory command.")
-        waypoints = ast.literal_eval(msg.data)
-        self.get_logger().info(f"Received DJI native waypoints: {waypoints}")
-        self.dji_interface.requestSendNavigateTrajectoryDJINative(waypoints)
+        data = ast.literal_eval(msg.data)
+        
+        # Support both formats: (speed, waypoints) tuple or just waypoints list
+        if isinstance(data, tuple) and len(data) == 2:
+            speed, waypoints = data
+        else:
+            # Legacy format: just waypoints, use default speed
+            waypoints = data
+            speed = 10.0
+        
+        self.get_logger().info(f"Received DJI native waypoints: {waypoints}, speed: {speed} m/s")
+        self.dji_interface.requestSendNavigateTrajectoryDJINative(waypoints, speed)
 
     def goto_yaw_callback(self, msg):
         self.get_logger().info("Received goto yaw command.")

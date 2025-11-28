@@ -313,9 +313,17 @@ class DJIInterface:
         """Navigate to a waypoint."""
         return self.requestSend(EP_GOTO_WP, f"{latitude},{longitude},{altitude}")
 
-    def requestSendGoToWPwithPID(self, latitude, longitude, altitude, yaw):
-        """Navigate to a waypoint with PID control."""
-        return self.requestSend(EP_GOTO_WP_PID, f"{latitude},{longitude},{altitude},{yaw}")
+    def requestSendGoToWPwithPID(self, latitude, longitude, altitude, yaw, speed: float = 5.0):
+        """Navigate to a waypoint with PID control.
+        
+        Args:
+            latitude: Target latitude
+            longitude: Target longitude
+            altitude: Target altitude
+            yaw: Target yaw angle
+            speed: Max speed in m/s (default 5.0)
+        """
+        return self.requestSend(EP_GOTO_WP_PID, f"{latitude},{longitude},{altitude},{yaw},{speed}")
     
     def requestSendGoToWPwithPIDtuning(self, latitude, longitude, altitude, yaw, kp_pos, ki_pos, kd_pos, kp_yaw, ki_yaw, kd_yaw):
         """Navigate to a waypoint with custom PID tuning parameters."""
@@ -347,17 +355,20 @@ class DJIInterface:
         message = ";".join(segments)
         return self.requestSend(EP_GOTO_TRAJECTORY, message)
     
-    def requestSendNavigateTrajectoryDJINative(self, waypoints):
+    def requestSendNavigateTrajectoryDJINative(self, waypoints, speed: float = 10.0):
         """
         Send waypoints to be executed using DJI's native waypoint mission system.
         :param waypoints: A list of triples (latitude, longitude, altitude) for each waypoint.
+        :param speed: Flight speed in m/s (default 10.0)
         :return: The response from the server.
         """
         if not waypoints:
             raise ValueError("No waypoints provided")
+        if len(waypoints) < 2:
+            raise ValueError("Need at least 2 waypoints for DJI native mission")
 
-        # Build the message format: "lat,lon,alt; lat,lon,alt; ..."
-        segments = []
+        # Build the message format: "speed;lat,lon,alt;lat,lon,alt;..."
+        segments = [str(speed)]
         for lat, lon, alt in waypoints:
             segments.append(f"{lat},{lon},{alt}")
 
