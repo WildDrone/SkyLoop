@@ -393,6 +393,7 @@ class DJIInterface:
 
     def requestSendGotoAltitude(self, altitude):
         """Navigate to a specific altitude."""
+        self.requestSendEnableVirtualStick()
         return self.requestSend(EP_GOTO_ALTITUDE, f"{altitude}")
 
     def requestCameraStartRecording(self):

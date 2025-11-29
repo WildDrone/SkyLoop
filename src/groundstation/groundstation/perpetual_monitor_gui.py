@@ -168,7 +168,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.drones_needed_label = None
         self.relay_alert_label = None
         self.relay_alert_icon = None
-        self._relay_alert_visible = False
+        self.relay_alert_container = None
         self.reconnect_label = None
         self.mission_timer_label = None
         self._mission_start_time = None
@@ -724,39 +724,39 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 if countdown > 0:
                     minutes = int(countdown // 60)
                     seconds = int(countdown % 60)
-                    self.countdown_label.text = f"{next_drone} in {minutes}:{seconds:02d}"
-                    self.countdown_label.style('color: white; font-weight: bold')
+                    self.countdown_label.text = f"{minutes}:{seconds:02d}"
+                    self.countdown_label.style('color: #e65100; font-weight: bold')
                     
                     if self.countdown_progress:
                         self.countdown_progress.value = max(0, min(1, countdown / 300))
                     
-                    # Threshold-based preparation alerts
-                    if hasattr(self, 'relay_alert_label') and self.relay_alert_label:
+                    # Threshold-based preparation alerts - use the alert container
+                    if hasattr(self, 'relay_alert_container') and self.relay_alert_container:
                         if countdown <= 60:  # 1 minute - CONNECT NOW
-                            self._relay_alert_visible = True
+                            self.relay_alert_container.style('background: #ffebee; border-left: 4px solid #f44336; display: block;')
                             self.relay_alert_label.text = f"CONNECT {next_drone} NOW!"
-                            self.relay_alert_label.style('color: #ff4444; animation: blink 0.5s infinite')
-                            self.relay_alert_icon.style('color: #ff4444; animation: blink 0.5s infinite')
+                            self.relay_alert_label.style('color: #c62828; animation: blink 0.5s infinite')
+                            self.relay_alert_icon.style('color: #c62828; animation: blink 0.5s infinite')
                         elif countdown <= 180:  # 3 minutes - GET READY
-                            self._relay_alert_visible = True
+                            self.relay_alert_container.style('background: #fff3e0; border-left: 4px solid #ff9800; display: block;')
                             self.relay_alert_label.text = f"GET {next_drone} READY"
-                            self.relay_alert_label.style('color: #ffaa00')
-                            self.relay_alert_icon.style('color: #ffaa00')
+                            self.relay_alert_label.style('color: #e65100;')
+                            self.relay_alert_icon.style('color: #e65100;')
                         elif countdown <= 300:  # 5 minutes - PREPARE
-                            self._relay_alert_visible = True
+                            self.relay_alert_container.style('background: #e8f5e9; border-left: 4px solid #4caf50; display: block;')
                             self.relay_alert_label.text = f"Prepare {next_drone}"
-                            self.relay_alert_label.style('color: #88ff88')
-                            self.relay_alert_icon.style('color: #88ff88')
+                            self.relay_alert_label.style('color: #2e7d32;')
+                            self.relay_alert_icon.style('color: #2e7d32;')
                         else:
-                            self._relay_alert_visible = False
+                            self.relay_alert_container.style('display: none;')
                 else:
-                    self.countdown_label.text = f"{next_drone} LAUNCHING!"
-                    self.countdown_label.style('color: #ff4444; font-weight: bold; animation: blink 0.5s infinite')
-                    if hasattr(self, 'relay_alert_label') and self.relay_alert_label:
-                        self._relay_alert_visible = True
-                        self.relay_alert_label.text = f"LAUNCH {next_drone}!"
-                        self.relay_alert_label.style('color: #ff4444; font-weight: bold; animation: blink 0.5s infinite')
-                        self.relay_alert_icon.style('color: #ff4444; animation: blink 0.5s infinite')
+                    self.countdown_label.text = "LAUNCHING!"
+                    self.countdown_label.style('color: #c62828; font-weight: bold; animation: blink 0.5s infinite')
+                    if hasattr(self, 'relay_alert_container') and self.relay_alert_container:
+                        self.relay_alert_container.style('background: #ffebee; border-left: 4px solid #f44336; display: block;')
+                        self.relay_alert_label.text = f"LAUNCHING {next_drone}!"
+                        self.relay_alert_label.style('color: #c62828; font-weight: bold; animation: blink 0.5s infinite')
+                        self.relay_alert_icon.style('color: #c62828; animation: blink 0.5s infinite')
             
             if self.next_drone_label:
                 self.next_drone_label.text = f"Next: {next_drone}"
@@ -805,29 +805,27 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.state_machine_container.clear()
         self.state_machine_labels.clear()
         
-        # Define the state flow
+        # Define the state flow with shorter labels
         states = [
-            ('IDLE', 'hourglass_empty', 'Waiting'),
-            ('PREFLIGHT_CHECK', 'checklist', 'Preflight'),
-            ('SETTING_RTH_ALTITUDE', 'height', 'Set RTH Alt'),
-            ('TAKING_OFF', 'flight_takeoff', 'Takeoff'),
-            ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climbing'),
+            ('IDLE', 'hourglass_empty', 'Idle'),
+            ('PREFLIGHT_CHECK', 'checklist', 'Check'),
+            ('SETTING_RTH_ALTITUDE', 'height', 'RTH'),
+            ('TAKING_OFF', 'flight_takeoff', 'T/O'),
+            ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climb'),
             ('TRANSIT_TO_MONITORING', 'flight', 'Transit'),
-            ('APPROACHING_POINT', 'gps_fixed', 'Approaching'),
-            ('MONITORING', 'videocam', 'Monitoring'),
+            ('APPROACHING_POINT', 'gps_fixed', 'Appr'),
+            ('MONITORING', 'videocam', 'Mon'),
             ('RETURNING_HOME', 'home', 'RTH'),
             ('COMPLETED', 'check_circle', 'Done'),
         ]
         
         with self.state_machine_container:
-            # State flow legend
-            with ui.row().classes('w-full flex-wrap gap-2 mb-3'):
+            # Ultra-compact state legend - icons only in a single row
+            with ui.row().classes('w-full justify-between gap-0'):
                 for state_name, icon, label in states:
-                    with ui.row().classes('items-center gap-1 px-2 py-1 rounded').style('background: #f0f0f0'):
-                        ui.icon(icon).style('font-size: 18px; color: #666')
-                        ui.label(label).classes('text-sm').style('color: #666')
-            
-            ui.separator().classes('my-2')
+                    with ui.column().classes('items-center').style('min-width: 28px;'):
+                        ui.icon(icon).style('font-size: 12px; color: #9e9e9e;')
+                        ui.label(label).style('font-size: 8px; color: #9e9e9e;')
             
             # Show drones in mission from mission controller
             drones_in_mission = list(self.mission_controller.drone_missions.keys())
@@ -835,9 +833,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 for namespace in drones_in_mission:
                     self._add_drone_state_row(namespace, states)
             elif self.drones:
-                ui.label("Mission not started").classes('text-gray-500 italic text-base')
+                ui.label("Mission not started").classes('text-gray-400 italic text-xs mt-1')
             else:
-                ui.label("No drones connected").classes('text-gray-500 italic text-base')
+                ui.label("No drones connected").classes('text-gray-400 italic text-xs mt-1')
     
     def _add_drone_state_row(self, namespace: str, states: list):
         """Add a state row for a drone."""
@@ -846,32 +844,33 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         self.state_machine_labels[namespace] = {}
         
-        with ui.row().classes('w-full items-center gap-2'):
-            # Drone name
-            ui.label(namespace).classes('font-bold text-base').style('min-width: 80px')
+        with ui.row().classes('w-full items-center gap-0 py-1').style('border-top: 1px solid #e0e0e0;'):
+            # Drone name - compact
+            ui.label(namespace).classes('font-bold text-xs').style('min-width: 60px; max-width: 60px; overflow: hidden; text-overflow: ellipsis;')
             
-            # State indicators
-            for state_name, icon, label in states:
-                is_current = (current_state == state_name)
-                is_past = self._is_state_past(current_state, state_name, states)
-                is_error = current_state in ['ERROR', 'ABORTED']
-                
-                if is_current:
-                    color = '#4CAF50'  # green - current
-                    bg = '#e8f5e9'
-                elif is_past:
-                    color = '#2196F3'  # blue - completed
-                    bg = '#e3f2fd'
-                elif is_error and state_name == current_state:
-                    color = '#f44336'  # red - error
-                    bg = '#ffebee'
-                else:
-                    color = '#bdbdbd'  # grey - not reached
-                    bg = '#fafafa'
-                
-                state_icon = ui.icon(icon).style(f'font-size: 22px; color: {color}; background: {bg}; border-radius: 50%; padding: 4px')
-                state_icon.tooltip(f"{label}: {state_name}")
-                self.state_machine_labels[namespace][state_name] = state_icon
+            # State indicators - smaller and tighter
+            with ui.row().classes('flex-grow justify-between gap-0'):
+                for state_name, icon, label in states:
+                    is_current = (current_state == state_name)
+                    is_past = self._is_state_past(current_state, state_name, states)
+                    is_error = current_state in ['ERROR', 'ABORTED']
+                    
+                    if is_current:
+                        color = '#4CAF50'  # green - current
+                        bg = '#e8f5e9'
+                    elif is_past:
+                        color = '#2196F3'  # blue - completed
+                        bg = '#e3f2fd'
+                    elif is_error and state_name == current_state:
+                        color = '#f44336'  # red - error
+                        bg = '#ffebee'
+                    else:
+                        color = '#bdbdbd'  # grey - not reached
+                        bg = '#fafafa'
+                    
+                    state_icon = ui.icon(icon).style(f'font-size: 14px; color: {color}; background: {bg}; border-radius: 50%; padding: 2px;')
+                    state_icon.tooltip(f"{label}: {state_name}")
+                    self.state_machine_labels[namespace][state_name] = state_icon
     
     def _is_state_past(self, current: str, check: str, states: list) -> bool:
         """Check if a state has been passed."""
@@ -967,44 +966,45 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             ui.separator()
             
-            # Mission Status Card
-            with ui.card().classes('w-full').style('background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;'):
-                with ui.row().classes('items-center gap-2'):
-                    ui.icon('analytics').classes('text-2xl')
+            # Mission Status Card - Compact layout
+            with ui.card().classes('w-full p-3'):
+                # Header row with status indicators inline
+                with ui.row().classes('items-center gap-3 w-full'):
+                    ui.icon('analytics').classes('text-xl text-primary')
                     ui.label("Mission Status").classes('text-lg font-bold')
+                    ui.space()
+                    self.mission_status_label = ui.label("Inactive").classes('text-sm font-bold px-2 py-1 rounded').style('background: #e0e0e0; color: #424242;')
+                    self.active_drone_label = ui.label("--").classes('text-sm font-bold px-2 py-1 rounded').style('background: #e3f2fd; color: #1565c0;')
                 
-                with ui.grid(columns=2).classes('w-full gap-2'):
-                    self.mission_status_label = ui.label("Inactive").classes('font-bold')
-                    self.active_drone_label = ui.label("Active: --")
+                # Timer and Countdown in one row
+                with ui.row().classes('w-full items-center gap-4 mt-2'):
+                    # Mission duration
+                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #f5f5f5;'):
+                        ui.icon('timer').classes('text-xl text-gray-600')
+                        self.mission_timer_label = ui.label("00:00:00").classes('text-xl font-bold font-mono').style('color: #1976d2;')
+                    
+                    # Relay countdown
+                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #fff3e0;'):
+                        ui.icon('schedule').classes('text-xl').style('color: #e65100;')
+                        self.countdown_label = ui.label("--:--").classes('text-xl font-bold font-mono').style('color: #e65100;')
                 
-                # Mission elapsed time
-                with ui.row().classes('items-center gap-2 mt-2'):
-                    ui.icon('timer').classes('text-xl')
-                    self.mission_timer_label = ui.label("00:00:00").classes('font-bold text-lg font-mono')
+                # Progress bar for countdown
+                self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=orange').classes('mt-1')
                 
-                self.countdown_label = ui.label("").classes('countdown-display mt-2')
-                self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback').classes('mt-1')
+                # Relay alert (hidden by default)
+                with ui.row().classes('w-full items-center gap-2 mt-2 p-2 rounded').style('background: #fff3e0; border-left: 3px solid #ff9800; display: none;') as self.relay_alert_container:
+                    self.relay_alert_icon = ui.icon('notifications_active').classes('text-xl').style('color: #e65100;')
+                    self.relay_alert_label = ui.label("").classes('font-bold text-sm').style('color: #bf360c;')
                 
-                # Relay preparation alert with icon
-                with ui.row().classes('items-center gap-2 mt-2').bind_visibility_from(self, '_relay_alert_visible'):
-                    self.relay_alert_icon = ui.icon('notifications_active').classes('text-2xl')
-                    self.relay_alert_label = ui.label("").classes('font-bold text-lg')
-                
-                # Show which drones need reconnection (battery swap)
-                with ui.row().classes('items-center gap-2 mt-2'):
-                    ui.icon('battery_charging_full').classes('text-xl')
-                    self.reconnect_label = ui.label("").classes('text-sm')
-                
-                self.drones_needed_label = ui.label("").classes('text-sm mt-1')
-            
-            ui.separator()
-            
-            # State Machine Display
-            with ui.expansion("Mission State Machine", icon='account_tree').classes('w-full'):
-                self.state_machine_container = ui.column().classes('w-full gap-1')
-                with self.state_machine_container:
-                    # States will be populated dynamically
-                    self._build_state_machine_display()
+                # Bottom row: Battery swap and Drones needed side by side
+                with ui.row().classes('w-full gap-2 mt-2'):
+                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #e8f5e9;'):
+                        ui.icon('battery_charging_full').classes('text-lg').style('color: #2e7d32;')
+                        self.reconnect_label = ui.label("None").classes('text-sm').style('color: #2e7d32;')
+                    
+                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #e3f2fd;'):
+                        ui.icon('group').classes('text-lg').style('color: #1565c0;')
+                        self.drones_needed_label = ui.label("--").classes('text-sm').style('color: #1565c0;')
             
             ui.separator()
             
@@ -1027,98 +1027,95 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Map click handler
                 self.map.on('map-click', self._on_map_click)
             
-            # Control panels row
-            with ui.row().classes('w-full gap-2 items-stretch').style('flex-wrap: wrap;'):
-                # Monitoring Point Control
-                with ui.card().classes('').style('flex: 1; min-width: 280px;'):
-                    with ui.row().classes('items-center gap-2'):
-                        ui.icon('place').classes('text-xl text-primary')
-                        ui.label("Monitoring Point").classes('text-lg font-bold')
-                    
-                    with ui.row().classes('w-full gap-2 items-end flex-wrap'):
-                        self.lat_input = ui.input(label='Lat', value='0.0').style('width: 100px')
-                        self.lon_input = ui.input(label='Lon', value='0.0').style('width: 100px')
-                        self.alt_input = ui.input(label='Alt (m)', value='50').style('width: 80px')
-                        self.heading_input = ui.input(label='Heading (°)', value='0').style('width: 90px').tooltip('Target drone heading at monitoring point (0-360°)')
-                        ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('color=primary dense').tooltip('Set Point')
-                        ui.button(icon='delete', on_click=self._clear_monitoring_point_ui).props('dense').tooltip('Clear')
-                    
-                    with ui.row().classes('items-center gap-1 text-xs text-gray-500'):
-                        ui.icon('touch_app').style('font-size: 14px')
-                        ui.label("Click on map to set point")
+            # Control panels and State Machine - single row with equal height cards
+            with ui.row().classes('w-full gap-2 items-stretch mt-2'):
+                # Column 1: Monitoring Point
+                with ui.card().classes('p-3').style('flex: 1; background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%); border-left: 3px solid #e53935;'):
+                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #ffcdd2;'):
+                        ui.icon('place').classes('text-lg').style('color: #e53935;')
+                        ui.label("Monitoring Point").classes('text-sm font-bold')
+                        ui.space()
+                        ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('round dense size=xs color=red').tooltip('Set')
+                        ui.button(icon='delete_outline', on_click=self._clear_monitoring_point_ui).props('round dense flat size=xs').tooltip('Clear')
+                    with ui.grid(columns=2).classes('w-full gap-1 mt-2'):
+                        self.lat_input = ui.input(label='Lat', value='0.0').props('dense outlined').classes('w-full')
+                        self.lon_input = ui.input(label='Lon', value='0.0').props('dense outlined').classes('w-full')
+                        self.alt_input = ui.input(label='Alt (m)', value='50').props('dense outlined').classes('w-full')
+                        self.heading_input = ui.input(label='Hdg (°)', value='0').props('dense outlined').classes('w-full')
                 
-                # Mission Control
-                with ui.card().classes('').style('flex: 1; min-width: 280px;'):
-                    with ui.row().classes('items-center gap-2'):
-                        ui.icon('flag').classes('text-xl text-primary')
-                        ui.label("Mission Control").classes('text-lg font-bold')
-                    
-                    with ui.row().classes('w-full gap-2 items-end'):
-                        self.rth_alt_input = ui.input(label='RTH Alt (m)', value='50').style('width: 100px')
-                        self.safety_buffer_input = ui.input(label='Buffer (s)', value='60').style('width: 80px')
-                    
-                    with ui.row().classes('w-full gap-2 items-end'):
-                        self.min_battery_input = ui.input(label='Min Battery (%)', value='30').style('width: 110px')
-                        self.min_satellites_input = ui.input(label='Min Sats', value='8').style('width: 80px')
-                    
-                    with ui.row().classes('w-full gap-2 mt-2'):
-                        ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green').tooltip('Start single drone mission')
-                        ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary').tooltip('Start relay mission')
-                        ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red').tooltip('Stop all missions')
-                
-                # Trajectory Options
-                with ui.card().classes('').style('flex: 1; min-width: 280px;'):
-                    with ui.row().classes('items-center gap-2'):
-                        ui.icon('route').classes('text-xl text-primary')
-                        ui.label("Trajectory").classes('text-lg font-bold')
-                    
+                # Column 2: Trajectory
+                with ui.card().classes('p-3').style('flex: 0.8; background: linear-gradient(135deg, #f3e5f5 0%, #ffffff 100%); border-left: 3px solid #8e24aa;'):
+                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #e1bee7;'):
+                        ui.icon('route').classes('text-lg').style('color: #8e24aa;')
+                        ui.label("Trajectory").classes('text-sm font-bold')
+                        ui.space()
+                        ui.button('Abort', icon='cancel', on_click=self._abort_trajectories).props('dense flat size=xs color=red')
                     self.trajectory_mode = ui.toggle(
-                        ['PID', 'DJI Native'], 
-                        value='PID',
+                        {1: 'PID', 2: 'DJI'}, 
+                        value=1,
                         on_change=self._on_trajectory_mode_change
-                    ).props('dense')
-                    
-                    # Speed slider for DJI Native mode
-                    with ui.row().classes('w-full items-center gap-2 mt-2'):
-                        ui.icon('speed').classes('text-lg')
+                    ).props('dense spread no-caps size=sm').classes('w-full mt-2')
+                    with ui.row().classes('w-full items-center gap-1 mt-1'):
+                        ui.icon('speed').classes('text-sm').style('color: #8e24aa;')
                         self.trajectory_speed_slider = ui.slider(
                             min=1, max=12, value=10, step=1,
                             on_change=self._on_trajectory_speed_change
-                        ).props('dense label').classes('flex-grow')
-                        self.trajectory_speed_label = ui.label('10 m/s').classes('text-sm font-mono w-16')
-                    
-                    with ui.row().classes('w-full gap-2 mt-2'):
-                        ui.button('Abort', icon='cancel', on_click=self._abort_trajectories).props('dense color=red')
+                        ).props('label-always dense').classes('flex-grow')
+                        self.trajectory_speed_label = ui.label('10').classes('text-xs font-mono font-bold')
+                
+                # Column 3: Mission Control
+                with ui.card().classes('p-3').style('flex: 1; background: linear-gradient(135deg, #e3f2fd 0%, #ffffff 100%); border-left: 3px solid #1976d2;'):
+                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #bbdefb;'):
+                        ui.icon('flag').classes('text-lg').style('color: #1976d2;')
+                        ui.label("Mission Control").classes('text-sm font-bold')
+                    with ui.grid(columns=2).classes('w-full gap-1 mt-2'):
+                        self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').classes('w-full')
+                        self.safety_buffer_input = ui.input(label='Buffer (s)', value='60').props('dense outlined').classes('w-full')
+                        self.min_battery_input = ui.input(label='Min Bat %', value='30').props('dense outlined').classes('w-full')
+                        self.min_satellites_input = ui.input(label='Min Sats', value='8').props('dense outlined').classes('w-full')
+                    with ui.row().classes('w-full gap-1 mt-2'):
+                        ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=sm').style('flex: 1;')
+                        ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=sm').style('flex: 1;')
+                        ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=sm').style('flex: 1;')
+                
+                # Column 4: State Machine (always visible)
+                with ui.card().classes('p-3').style('flex: 1.2; background: linear-gradient(135deg, #e8f5e9 0%, #ffffff 100%); border-left: 3px solid #43a047;'):
+                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #c8e6c9;'):
+                        ui.icon('account_tree').classes('text-lg').style('color: #43a047;')
+                        ui.label("State Machine").classes('text-sm font-bold')
+                    self.state_machine_container = ui.column().classes('w-full gap-1 mt-2')
+                    with self.state_machine_container:
+                        self._build_state_machine_display()
             
             # Bottom row: Event Log and Mission Statistics side by side (or Debug Console when enabled)
             # Normal view container
             with ui.column().classes('w-full gap-2') as self.normal_logs_container:
-                with ui.row().classes('w-full gap-2'):
+                with ui.row().classes('w-full gap-2 items-stretch'):
                     # Event Log
-                    with ui.card().classes('').style('flex: 1; max-height: 180px;'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.icon('list_alt').classes('text-xl text-primary')
-                            ui.label("Event Log").classes('text-lg font-bold')
-                        with ui.scroll_area().classes('w-full').style('max-height: 130px').props('id=event-log') as self.event_scroll:
-                            self.event_log = ui.column().classes('w-full gap-1')
+                    with ui.card().classes('p-2').style('flex: 1;'):
+                        with ui.row().classes('items-center gap-2 pb-1').style('border-bottom: 1px solid #e0e0e0;'):
+                            ui.icon('list_alt').classes('text-lg text-primary')
+                            ui.label("Event Log").classes('text-sm font-bold')
+                        with ui.scroll_area().classes('w-full').style('height: 100px;').props('id=event-log') as self.event_scroll:
+                            self.event_log = ui.column().classes('w-full gap-0')
                     
                     # Mission Statistics
-                    with ui.card().classes('').style('flex: 1; max-height: 180px;'):
-                        with ui.row().classes('items-center gap-2 w-full'):
-                            ui.icon('analytics').classes('text-xl text-primary')
-                            ui.label("Mission Statistics").classes('text-lg font-bold')
+                    with ui.card().classes('p-2').style('flex: 1;'):
+                        with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #e0e0e0;'):
+                            ui.icon('analytics').classes('text-lg text-primary')
+                            ui.label("Mission Statistics").classes('text-sm font-bold')
                             ui.space()
-                            ui.button(icon='delete', on_click=self._clear_mission_stats).props('flat dense').tooltip('Clear statistics')
+                            ui.button(icon='delete', on_click=self._clear_mission_stats).props('flat dense size=sm').tooltip('Clear')
                         
                         # Header row
-                        with ui.row().classes('w-full text-sm font-bold text-gray-600 gap-0 px-1').style('border-bottom: 1px solid #ddd'):
-                            ui.label("Drone").style('flex: 2; min-width: 80px')
-                            ui.label("#").style('flex: 1; text-align: center; min-width: 40px')
-                            ui.label("Est.").style('flex: 1.5; text-align: center; min-width: 60px').tooltip('Estimated travel time')
-                            ui.label("Travel").style('flex: 1.5; text-align: center; min-width: 60px').tooltip('Actual travel time to monitoring point')
-                            ui.label("RTH").style('flex: 1.5; text-align: center; min-width: 60px').tooltip('Actual return to home time')
+                        with ui.row().classes('w-full text-xs font-bold text-gray-500 gap-0 mt-1'):
+                            ui.label("Drone").style('flex: 2;')
+                            ui.label("#").style('flex: 0.8; text-align: center;')
+                            ui.label("Est.").style('flex: 1.2; text-align: center;')
+                            ui.label("Travel").style('flex: 1.2; text-align: center;')
+                            ui.label("RTH").style('flex: 1.2; text-align: center;')
                         
-                        with ui.scroll_area().classes('w-full').style('max-height: 100px') as self.mission_stats_scroll:
+                        with ui.scroll_area().classes('w-full').style('height: 80px;') as self.mission_stats_scroll:
                             self.mission_stats_container = ui.column().classes('w-full gap-0')
             
             # Debug Console (hidden by default, replaces above when enabled)
@@ -1419,8 +1416,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._build_state_machine_display()
             
             self.mission_status_label.text = "Single Drone"
-            self.mission_status_label.style('color: #2e7d32;')  # green
-            self.active_drone_label.text = f"Active: {drone_ns}"
+            self.mission_status_label.style('background: #e8f5e9; color: #2e7d32;')  # green
+            self.active_drone_label.text = drone_ns
+            self.active_drone_label.style('background: #e8f5e9; color: #2e7d32;')
             ui.notify(f'Mission started', type='positive')
             self._emit_log(f"Single mission started with {drone_ns}")
         else:
@@ -1495,9 +1493,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._build_state_machine_display()
             
             travel_min = int(travel_time // 60)
-            self.mission_status_label.text = f"Relay ({len(drone_list)} drones)"
-            self.mission_status_label.style('color: #1565c0;')  # blue
-            self.active_drone_label.text = f"Active: {drone_list[0]}"
+            self.mission_status_label.text = f"Relay ({len(drone_list)})"
+            self.mission_status_label.style('background: #e3f2fd; color: #1565c0;')  # blue
+            self.active_drone_label.text = drone_list[0]
+            self.active_drone_label.style('background: #e3f2fd; color: #1565c0;')
             ui.notify(f'Relay mission started with {len(drone_list)} drones (~{travel_min}min to point)', type='positive')
             self._emit_log(f"Relay mission started: {', '.join(drone_list)} - {distance/1000:.1f}km to point")
         else:
@@ -1529,14 +1528,16 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self._stop_mission_timer()
         # Keep the final time displayed, just stop updating
         self.mission_status_label.text = "Stopped"
-        self.mission_status_label.style('color: #c62828;')  # red
-        self.countdown_label.text = ""
+        self.mission_status_label.style('background: #ffebee; color: #c62828;')  # red
+        self.countdown_label.text = "--:--"
+        self.active_drone_label.text = "--"
+        self.active_drone_label.style('background: #e0e0e0; color: #424242;')
         ui.notify('Mission stopped', type='info')
         self._emit_log("Mission stopped - drones returning home")
     
     def _on_trajectory_mode_change(self, e):
         """Handle trajectory mode toggle change."""
-        use_dji_native = (e.value == 'DJI Native')
+        use_dji_native = (e.value == 2)  # 1=PID, 2=DJI Native
         
         # Update mission controller's navigation mode (self IS the ROS node)
         if hasattr(self, 'mission_controller'):
