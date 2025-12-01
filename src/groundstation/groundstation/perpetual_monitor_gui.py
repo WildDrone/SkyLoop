@@ -222,7 +222,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.trajectory_speed_label = None
         
         # Map settings
-        self.map_center = (0.025324, 36.868363)  # Default center
+        self.map_center = (49.306260, 4.593715)  # Default center
         
         # Drone colors for visualization
         self.drone_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
@@ -271,16 +271,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             # If battery increased by more than 10%, assume battery was swapped
             if battery_increase > 10:
-                mission = self.mission_controller.drone_missions.get(namespace) if self.mission_controller else None
-                if mission and mission.state == MissionState.COMPLETED:
-                    self._emit_log(f"[{namespace}] Battery swap detected ({last_level:.0f}% → {level:.0f}%), resetting to IDLE")
-                    mission.state = MissionState.IDLE
-                    mission.error_message = ""
-                    mission.retry_count = 0
-                    mission.mission_start_time = None
-                    mission.monitoring_start_time = None
-                    mission.transit_start_time = None
-                    
+                self._emit_log(f"[{namespace}] Battery swap detected ({last_level:.0f}% → {level:.0f}%)")
+                
+                # Delegate state change to mission controller
+                if self.mission_controller and self.mission_controller.notify_battery_swap(namespace):
                     # Reset RTH predictor for fresh data with new battery
                     if namespace in self.rth_predictors:
                         self.rth_predictors[namespace] = DroneRTHPredictor(namespace=namespace)
@@ -374,6 +368,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             MissionState.APPROACHING_POINT: DroneState.FLYING_TO_POINT,
             MissionState.MONITORING: DroneState.MONITORING,
             MissionState.WAITING_FOR_RELAY: DroneState.WAITING_FOR_RELAY,
+            MissionState.CAMERA_SYNC: DroneState.CAMERA_SYNC,
             MissionState.RETURNING_HOME: DroneState.RETURNING_HOME,
             MissionState.COMPLETED: DroneState.IDLE,
             MissionState.ABORTED: DroneState.IDLE,
@@ -456,10 +451,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     self._update_mission_stat_rth(namespace, rth_duration)
                     self._emit_log(f"[{namespace}] Landed after RTH ({rth_duration:.1f}s)")
                     
-                    # Update mission state to COMPLETED
-                    if self.mission_controller and namespace in self.mission_controller.drone_missions:
-                        mission = self.mission_controller.drone_missions[namespace]
-                        mission.state = MissionState.COMPLETED
+                    # Delegate state change to mission controller
+                    if self.mission_controller:
+                        self.mission_controller.notify_landing_detected(namespace, rth_duration)
                         # Emit state update to refresh GUI (subscriber will call _update_state_icons)
                         self.drone_state_update.emit({
                             'namespace': namespace,
@@ -771,6 +765,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     DroneState.TAKING_OFF: "background: #e3f2fd; color: #1565c0;",
                     DroneState.FLYING_TO_POINT: "background: #e3f2fd; color: #1565c0;",
                     DroneState.MONITORING: "background: #f3e5f5; color: #7b1fa2;",
+                    DroneState.WAITING_FOR_RELAY: "background: #fff8e1; color: #f9a825;",
+                    DroneState.CAMERA_SYNC: "background: #e8f5e9; color: #2e7d32;",
                     DroneState.RETURNING_HOME: "background: #fff3e0; color: #ef6c00;",
                     DroneState.LANDING: "background: #e0f2f1; color: #00695c;",
                     DroneState.EMERGENCY: "background: #ffebee; color: #c62828;"
@@ -976,6 +972,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ('APPROACHING_POINT', 'gps_fixed', 'Appr'),
             ('MONITORING', 'videocam', 'Mon'),
             ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),
+            ('CAMERA_SYNC', '360', 'Sync'),
             ('RETURNING_HOME', 'home', 'RTH'),
             ('COMPLETED', 'check_circle', 'Done'),
         ]
@@ -1063,6 +1060,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ('APPROACHING_POINT', 'gps_fixed', 'Approaching'),
             ('MONITORING', 'videocam', 'Monitoring'),
             ('WAITING_FOR_RELAY', 'swap_horiz', 'Waiting Relay'),
+            ('CAMERA_SYNC', '360', 'Camera Sync'),
             ('RETURNING_HOME', 'home', 'RTH'),
             ('COMPLETED', 'check_circle', 'Done'),
         ]

@@ -44,6 +44,7 @@ class DroneState(Enum):
     RETURNING_HOME = "Returning Home"
     LANDING = "Landing"
     WAITING_FOR_RELAY = "Waiting for Relay"
+    CAMERA_SYNC = "Camera Sync"
     EMERGENCY = "Emergency"
 
 
