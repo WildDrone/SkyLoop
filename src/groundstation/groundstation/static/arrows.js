@@ -19,19 +19,19 @@ function init_arrows(map_id) {
     }
 }
 
-function place_arrow(map_id, lat, lng, rotationAngle = 0, i, z=0) {
+function place_arrow(map_id, lat, lng, rotationAngle = 0, i, color = '#FF6B6B', darkColor = '#b34a4a') {
     init_arrows(map_id);
     if ( ! arrows.initialized ) {
         console.log('Markers not initialized / Leaflet probably not yet loaded');
         return;
     }
     //delete_arrow(0)
-    // Create SVG icon as arrow and apply rotation
+    // Create SVG icon as arrow and apply rotation with custom colors
     var icon = L.divIcon({
         className: 'marker-icon',
         html: '<svg width="30" height="40">\
-                <path d="M15 0 L0 40 L15 30 Z" fill="red"/>\
-                <path d="M15 0 L15 30 L30 40 Z" fill="darkred"/>\
+                <path d="M15 0 L0 40 L15 30 Z" fill="' + color + '"/>\
+                <path d="M15 0 L15 30 L30 40 Z" fill="' + darkColor + '"/>\
                 </svg>',
         iconAnchor: [15, 20],
         iconSize: [30, 40],
@@ -41,7 +41,9 @@ function place_arrow(map_id, lat, lng, rotationAngle = 0, i, z=0) {
     // Create marker
     var arrow = L.marker([lat, lng], {
         icon: icon,
-        rotationAngle: rotationAngle
+        rotationAngle: rotationAngle,
+        arrowColor: color,
+        arrowDarkColor: darkColor
     }).addTo( arrows.feature_group )
     // Rotate using CSS
     var rotationStyle = 'transform: rotate(' + rotationAngle + 'deg);';

@@ -8,7 +8,6 @@ Author: Edouard Rolland
 Project: WildDrone
 """
 
-import threading
 import math
 import time
 import subprocess
@@ -19,7 +18,6 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Callable
 from pathlib import Path
 from datetime import datetime
-import ast
 
 import rclpy
 from rclpy.node import Node
@@ -67,6 +65,7 @@ class DroneData:
     ip_address: str = ""
     namespace: str = ""
     is_connected: bool = False
+    color: str = "#FF6B6B"  # Assigned color for UI visualization
     
     # Telemetry
     latitude: float = 0.0
@@ -120,34 +119,133 @@ class DroneRTHPredictor:
     Uses linear regression on battery history to predict when battery will reach
     the RTH trigger threshold (batteryNeededToGoHome + margin).
     
+    DJI returns battery as integer steps, so we only keep the FIRST point
+    of each battery level to avoid skewing the regression.
+    
     This is a simplified version for ROS2 integration - receives data from DroneData.
     """
     
-    MAX_POINTS = 600  # 10 minutes at 1Hz
+    MAX_POINTS = 100  # Max unique battery levels to keep (100% to 0%)
     RTH_TRIGGER_MARGIN = 2  # RTH triggers when battery <= batt_needed_rth + margin
     
-    def __init__(self):
-        from collections import deque
-        import numpy as np
+    # Import numpy once at class level
+    import numpy as np
+    import time as _time
+    import csv
+    import os
+    from datetime import datetime as _datetime
+    
+    def __init__(self, namespace: str = "drone"):
+        self.namespace = namespace
         
-        # Data storage (deques for sliding window)
-        self.timestamps = deque(maxlen=self.MAX_POINTS)
-        self.battery_level = deque(maxlen=self.MAX_POINTS)
-        self.batt_needed_rth = deque(maxlen=self.MAX_POINTS)
+        # Data storage - only first point per battery level
+        # Key: battery level (int), Value: (timestamp, batt_needed_rth)
+        self.battery_points: dict = {}  # {battery_level: (timestamp, batt_needed_rth)}
         
         # Track max battery needed to go home (for conservative prediction)
         self.max_batt_needed_rth = 0.0
+        
+        # Track last seen battery level to detect changes
+        self.last_battery_level = None
         
         # State
         self.is_active = False  # Only predict when drone is in MONITORING state
         self.start_time = None
         
+        # CSV logging
+        self.csv_file = None
+        self.csv_writer = None
+        self.csv_path = None
+        
+    def _init_csv_logging(self):
+        """Initialize CSV file for logging RTH predictor data."""
+        if self.csv_file is not None:
+            return  # Already initialized
+        
+        # Create logs directory if it doesn't exist
+        log_dir = self.os.path.expanduser("~/rth_predictor_logs")
+        self.os.makedirs(log_dir, exist_ok=True)
+        
+        # Create filename with timestamp and drone namespace
+        timestamp = self._datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_ns = self.namespace.replace("/", "_")
+        self.csv_path = self.os.path.join(log_dir, f"rth_predictor_{safe_ns}_{timestamp}.csv")
+        
+        # Open CSV file and write header
+        self.csv_file = open(self.csv_path, 'w', newline='')
+        self.csv_writer = self.csv.writer(self.csv_file)
+        self.csv_writer.writerow([
+            'elapsed_time',
+            'battery_level',
+            'batt_needed_to_go_home',
+            'max_batt_needed_rth',
+            'rth_threshold',
+            'drain_rate_per_min',
+            'predicted_rth_seconds',
+            'data_points',
+            'slope',
+            'intercept'
+        ])
+        
+    def _log_to_csv(self, battery: float, batt_needed: float):
+        """Log current state to CSV file."""
+        if not self.is_active or self.start_time is None:
+            return
+            
+        if self.csv_writer is None:
+            self._init_csv_logging()
+        
+        elapsed = self._time.time() - self.start_time
+        
+        # Get current prediction info
+        times, batteries = self._get_regression_data()
+        slope = 0.0
+        intercept = 0.0
+        drain_rate = 0.0
+        predicted_rth = float('inf')
+        rth_threshold = self.max_batt_needed_rth + self.RTH_TRIGGER_MARGIN
+        
+        if times is not None and len(times) >= 2:
+            try:
+                slope, intercept = self.np.polyfit(times, batteries, 1)
+                drain_rate = -slope * 60  # %/min
+                
+                if slope < 0:
+                    t_rth = (rth_threshold - intercept) / slope
+                    predicted_rth = max(0.0, t_rth - elapsed)
+            except:
+                pass
+        
+        # Write row
+        self.csv_writer.writerow([
+            f"{elapsed:.2f}",
+            f"{battery:.1f}",
+            f"{batt_needed:.1f}",
+            f"{self.max_batt_needed_rth:.1f}",
+            f"{rth_threshold:.1f}",
+            f"{drain_rate:.4f}",
+            f"{predicted_rth:.1f}" if predicted_rth != float('inf') else "inf",
+            len(self.battery_points),
+            f"{slope:.6f}",
+            f"{intercept:.2f}"
+        ])
+        self.csv_file.flush()  # Ensure data is written immediately
+        
+    def close_csv(self):
+        """Close CSV file when done."""
+        if self.csv_file:
+            self.csv_file.close()
+            self.csv_file = None
+            self.csv_writer = None
+        
     def reset(self):
         """Reset the predictor when drone state changes."""
-        self.timestamps.clear()
-        self.battery_level.clear()
-        self.batt_needed_rth.clear()
+        # Close previous CSV if exists
+        self.close_csv()
+        
+        self.battery_points.clear()
         self.max_batt_needed_rth = 0.0
+        self.last_battery_level = None
         self.start_time = None
         self.is_active = False
     
@@ -155,19 +253,21 @@ class DroneRTHPredictor:
         """
         Update predictor with new telemetry data.
         
+        Only stores the FIRST timestamp for each battery level (integer).
+        DJI returns battery as steps, so multiple readings at same level
+        would skew the regression.
+        
         Args:
             battery: Current battery percentage
             batt_needed_to_go_home: DJI's batteryNeededToGoHome value
             is_monitoring: Whether drone is currently in MONITORING state
         """
-        import time
-        
         # Start/stop tracking based on monitoring state
         if is_monitoring and not self.is_active:
             # Just started monitoring - reset and start fresh
             self.reset()
             self.is_active = True
-            self.start_time = time.time()
+            self.start_time = self._time.time()
         elif not is_monitoring and self.is_active:
             # Stopped monitoring - deactivate but keep data for reference
             self.is_active = False
@@ -175,36 +275,64 @@ class DroneRTHPredictor:
         
         if not self.is_active:
             return
-            
-        elapsed = time.time() - self.start_time
-        self.timestamps.append(elapsed)
-        self.battery_level.append(battery)
-        self.batt_needed_rth.append(batt_needed_to_go_home)
+        
+        # Convert battery to integer (DJI uses integer steps)
+        battery_int = int(battery)
+        
+        # Only store the FIRST point for each battery level
+        if battery_int not in self.battery_points:
+            elapsed = self._time.time() - self.start_time
+            self.battery_points[battery_int] = (elapsed, batt_needed_to_go_home)
+        
+        self.last_battery_level = battery_int
         
         # Track maximum battery needed to go home (conservative approach)
         if batt_needed_to_go_home > self.max_batt_needed_rth:
             self.max_batt_needed_rth = batt_needed_to_go_home
+        
+        # Log data to CSV
+        self._log_to_csv(battery, batt_needed_to_go_home)
+    
+    def _get_regression_data(self):
+        """
+        Get arrays of (timestamps, battery_levels) for regression.
+        
+        Returns:
+            Tuple of (times_array, batteries_array) sorted by time,
+            or (None, None) if insufficient data.
+        """
+        if len(self.battery_points) < 2:
+            return None, None
+        
+        # Extract and sort by timestamp
+        points = [(t, batt) for batt, (t, _) in self.battery_points.items()]
+        points.sort(key=lambda x: x[0])  # Sort by timestamp
+        
+        times = self.np.array([p[0] for p in points])
+        batteries = self.np.array([p[1] for p in points])
+        
+        return times, batteries
     
     def predict_rth_time(self) -> float:
         """
         Predict time until RTH is triggered in seconds.
         
+        Uses only one point per battery level for accurate regression.
+        
         Returns:
             Predicted seconds until RTH, or float('inf') if cannot predict.
         """
-        import numpy as np
-        import time
-        
-        if not self.is_active or len(self.battery_level) < 2 or self.start_time is None:
+        if not self.is_active or self.start_time is None:
             return float('inf')
         
-        # Get all data for regression
-        times = np.array(list(self.timestamps))
-        batteries = np.array(list(self.battery_level))
+        # Get regression data (one point per battery level)
+        times, batteries = self._get_regression_data()
+        if times is None:
+            return float('inf')
         
-        # Linear regression on ALL points: battery = a*t + b
+        # Linear regression: battery = slope*t + intercept
         try:
-            slope, intercept = np.polyfit(times, batteries, 1)
+            slope, intercept = self.np.polyfit(times, batteries, 1)
         except:
             return float('inf')
         
@@ -217,7 +345,7 @@ class DroneRTHPredictor:
         rth_threshold = self.max_batt_needed_rth + self.RTH_TRIGGER_MARGIN
         
         # Current time (use actual current time relative to start, not last stored timestamp)
-        current_time = time.time() - self.start_time
+        current_time = self._time.time() - self.start_time
         
         # Find when battery line crosses threshold
         # battery(t) = slope * t + intercept = rth_threshold
@@ -230,17 +358,13 @@ class DroneRTHPredictor:
         return max(0.0, time_until_rth)
     
     def get_drain_rate(self) -> float:
-        """Get battery drain rate in %/second."""
-        import numpy as np
-        
-        if len(self.timestamps) < 2:
+        """Get battery drain rate in %/second using one point per battery level."""
+        times, batteries = self._get_regression_data()
+        if times is None:
             return 0.0
         
-        times = np.array(list(self.timestamps))
-        batteries = np.array(list(self.battery_level))
-        
         try:
-            slope, intercept = np.polyfit(times, batteries, 1)
+            slope, intercept = self.np.polyfit(times, batteries, 1)
             return -slope  # Negative slope = positive drain rate
         except:
             return 0.0
@@ -252,14 +376,19 @@ class DroneRTHPredictor:
         Returns:
             Dict with all computation details for debugging.
         """
-        import numpy as np
-        import time
+        # Get current battery level from the most recent point
+        current_battery = self.last_battery_level if self.last_battery_level is not None else 0.0
+        
+        # Get current batt_needed_rth from the last stored point
+        current_batt_needed = 0.0
+        if self.battery_points and self.last_battery_level in self.battery_points:
+            _, current_batt_needed = self.battery_points[self.last_battery_level]
         
         info = {
             'is_active': self.is_active,
-            'data_points': len(self.battery_level),
-            'current_battery': self.battery_level[-1] if self.battery_level else 0.0,
-            'batt_needed_to_go_home': self.batt_needed_rth[-1] if self.batt_needed_rth else 0.0,
+            'data_points': len(self.battery_points),
+            'current_battery': float(current_battery),
+            'batt_needed_to_go_home': current_batt_needed,
             'max_batt_needed_to_go_home': self.max_batt_needed_rth,
             'rth_threshold': 0.0,
             'slope': 0.0,
@@ -271,15 +400,16 @@ class DroneRTHPredictor:
             'dji_remaining_flight_time': 0.0,  # Will be filled by caller
         }
         
-        if not self.is_active or len(self.battery_level) < 2 or self.start_time is None:
+        if not self.is_active or self.start_time is None:
             return info
         
-        # Get all data for regression
-        times = np.array(list(self.timestamps))
-        batteries = np.array(list(self.battery_level))
+        # Get regression data (one point per battery level)
+        times, batteries = self._get_regression_data()
+        if times is None:
+            return info
         
         try:
-            slope, intercept = np.polyfit(times, batteries, 1)
+            slope, intercept = self.np.polyfit(times, batteries, 1)
         except:
             return info
         
@@ -292,7 +422,7 @@ class DroneRTHPredictor:
         info['rth_threshold'] = rth_threshold
         
         # Current time relative to start
-        current_time = time.time() - self.start_time
+        current_time = self._time.time() - self.start_time
         info['elapsed_since_monitoring'] = current_time
         
         if slope >= 0:
@@ -334,7 +464,6 @@ class DroneRTHPredictor:
             info['chart_rth_point'] = []
         
         # Current time vertical marker (from battery level to 0)
-        current_battery = batteries[-1]
         current_time_min = current_time / 60
         info['chart_current_time_line'] = [
             [current_time_min, 0],
@@ -353,6 +482,7 @@ class MonitoringPoint:
     latitude: float = 0.0
     longitude: float = 0.0
     altitude: float = 50.0  # Default monitoring altitude
+    heading: float = 0.0  # Target heading in degrees (0-360)
     is_set: bool = False
     source: str = ""  # "drone", "map", "manual"
 
@@ -586,12 +716,13 @@ class PerpetualMonitorNode(Node):
         Get remaining flight time for a drone.
         
         Uses RTH predictor when drone is in MONITORING state for accurate relay timing.
+        Falls back to DJI's remaining_flight_time when predictor has insufficient data.
         
         Args:
             namespace: The drone's ROS namespace
             
         Returns:
-            Remaining flight time in seconds from RTH predictor, or 0.0 if unavailable
+            Remaining flight time in seconds
         """
         if namespace not in self.drones:
             return 0.0
@@ -607,21 +738,26 @@ class PerpetualMonitorNode(Node):
             if predicted_time != float('inf') and predicted_time > 0:
                 return predicted_time
         
-        # Return 0 if no valid prediction available
-        return 0.0
+        # Fallback to DJI's remaining_flight_time when predictor has insufficient data
+        # This is critical - without this, returning 0 would trigger immediate RTH!
+        return drone.remaining_flight_time
     
     def _on_mission_status_update(self, namespace: str, state: MissionState, message: str):
         """Handle mission status updates from controller."""
         if namespace in self.drones:
             # Map MissionState to DroneState
             state_map = {
+                MissionState.IDLE: DroneState.IDLE,
                 MissionState.TAKING_OFF: DroneState.TAKING_OFF,
                 MissionState.CLIMBING_TO_ALTITUDE: DroneState.TAKING_OFF,
                 MissionState.TRANSIT_TO_MONITORING: DroneState.FLYING_TO_POINT,
                 MissionState.APPROACHING_POINT: DroneState.FLYING_TO_POINT,
                 MissionState.MONITORING: DroneState.MONITORING,
+                MissionState.WAITING_FOR_RELAY: DroneState.WAITING_FOR_RELAY,
                 MissionState.RETURNING_HOME: DroneState.RETURNING_HOME,
-                MissionState.LANDING: DroneState.LANDING,
+                MissionState.COMPLETED: DroneState.IDLE,
+                MissionState.ABORTED: DroneState.IDLE,
+                MissionState.ERROR: DroneState.EMERGENCY,
             }
             
             if state in state_map:
@@ -704,18 +840,24 @@ class PerpetualMonitorNode(Node):
             self.get_logger().error(f"Failed to launch controller node: {e}")
             return False
         
+        # Assign a unique color to this drone
+        drone_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
+        color_idx = len(self.drones) % len(drone_colors)
+        drone_color = drone_colors[color_idx]
+        
         # Create drone data entry
         drone = DroneData(
             ip_address=ip_address,
             namespace=namespace,
             is_connected=True,
             connection_time=time.time(),
-            state=DroneState.CONNECTED
+            state=DroneState.CONNECTED,
+            color=drone_color
         )
         self.drones[namespace] = drone
         
         # Create RTH predictor for this drone
-        self.rth_predictors[namespace] = DroneRTHPredictor()
+        self.rth_predictors[namespace] = DroneRTHPredictor(namespace=namespace)
         
         # Set up ROS subscribers for this drone's telemetry
         self._setup_drone_subscribers(namespace)
@@ -788,8 +930,9 @@ class PerpetualMonitorNode(Node):
         if namespace in self.mission.drones_in_mission:
             self.mission.drones_in_mission.remove(namespace)
         
-        # Clean up RTH predictor
+        # Clean up RTH predictor (close CSV file first)
         if namespace in self.rth_predictors:
+            self.rth_predictors[namespace].close_csv()
             del self.rth_predictors[namespace]
         
         # Remove drone data
@@ -1250,6 +1393,7 @@ class PerpetualMonitorNode(Node):
             latitude=lat,
             longitude=lon,
             altitude=alt,
+            heading=heading,
             is_set=True,
             source=source
         )

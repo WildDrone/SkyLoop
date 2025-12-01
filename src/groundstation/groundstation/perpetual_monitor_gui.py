@@ -21,7 +21,7 @@ from nicegui import Event, app, ui, ui_run
 
 from groundstation.perpetual_monitor import (
     PerpetualMonitorNode, DroneData, DroneState, MissionPhase,
-    MonitoringPoint, RelayMission
+    MonitoringPoint, RelayMission, DroneRTHPredictor
 )
 from groundstation.mission_controller import MissionController, MissionState
 
@@ -191,6 +191,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # RTH landing detection
         self.drone_rth_tracking: Dict[str, dict] = {}  # {ns: {start_time, last_alt, stable_count, detected}}
         
+        # Battery swap detection (track last battery level per drone)
+        self.drone_last_battery: Dict[str, float] = {}
+        
         # Debug mode
         self.debug_mode = False
         self.debug_console = None
@@ -257,8 +260,39 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _on_battery(self, namespace: str, level: float):
         """Override battery callback to emit event."""
-        if namespace in self.drones:
-            self.drones[namespace].battery_level = level
+        # IMPORTANT: Call parent to update drone data AND RTH predictor
+        super()._on_battery(namespace, level)
+        
+        # Detect battery swap: if battery level increases significantly, drone got a new battery
+        # Reset to IDLE so it can be used for next relay
+        if namespace in self.drone_last_battery:
+            last_level = self.drone_last_battery[namespace]
+            battery_increase = level - last_level
+            
+            # If battery increased by more than 10%, assume battery was swapped
+            if battery_increase > 10:
+                mission = self.mission_controller.drone_missions.get(namespace) if self.mission_controller else None
+                if mission and mission.state == MissionState.COMPLETED:
+                    self._emit_log(f"[{namespace}] Battery swap detected ({last_level:.0f}% → {level:.0f}%), resetting to IDLE")
+                    mission.state = MissionState.IDLE
+                    mission.error_message = ""
+                    mission.retry_count = 0
+                    mission.mission_start_time = None
+                    mission.monitoring_start_time = None
+                    mission.transit_start_time = None
+                    
+                    # Reset RTH predictor for fresh data with new battery
+                    if namespace in self.rth_predictors:
+                        self.rth_predictors[namespace] = DroneRTHPredictor(namespace=namespace)
+                    
+                    # Emit state update to refresh GUI
+                    self.drone_state_update.emit({
+                        'namespace': namespace,
+                        'state': DroneState.IDLE
+                    })
+        
+        self.drone_last_battery[namespace] = level
+        
         self.drone_battery_update.emit({
             'namespace': namespace,
             'level': level
@@ -266,17 +300,21 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Also emit RTH predictor update if available
         if namespace in self.rth_predictors:
-            predictor = self.rth_predictors[namespace]
-            debug_info = predictor.get_debug_info()
-            
-            # Add DJI's remaining_flight_time for comparison
-            if namespace in self.drones:
-                debug_info['dji_remaining_flight_time'] = self.drones[namespace].remaining_flight_time
-            
-            self.rth_predictor_update.emit({
-                'namespace': namespace,
-                'debug_info': debug_info
-            })
+            try:
+                predictor = self.rth_predictors[namespace]
+                debug_info = predictor.get_debug_info()
+                
+                # Add DJI's remaining_flight_time for comparison
+                if namespace in self.drones:
+                    debug_info['dji_remaining_flight_time'] = self.drones[namespace].remaining_flight_time
+                
+                self.rth_predictor_update.emit({
+                    'namespace': namespace,
+                    'debug_info': debug_info
+                })
+            except Exception as e:
+                # Silently ignore threading issues during RTH predictor updates
+                pass
     
     def _on_remaining_flight_time(self, namespace: str, time_remaining: float):
         """Override flight time callback to emit event."""
@@ -328,13 +366,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Map MissionState to DroneState
         state_map = {
+            MissionState.IDLE: DroneState.IDLE,
+            MissionState.SETTING_RTH_ALTITUDE: DroneState.IDLE,
             MissionState.TAKING_OFF: DroneState.TAKING_OFF,
             MissionState.CLIMBING_TO_ALTITUDE: DroneState.TAKING_OFF,
             MissionState.TRANSIT_TO_MONITORING: DroneState.FLYING_TO_POINT,
             MissionState.APPROACHING_POINT: DroneState.FLYING_TO_POINT,
             MissionState.MONITORING: DroneState.MONITORING,
+            MissionState.WAITING_FOR_RELAY: DroneState.WAITING_FOR_RELAY,
             MissionState.RETURNING_HOME: DroneState.RETURNING_HOME,
-            MissionState.LANDING: DroneState.LANDING,
+            MissionState.COMPLETED: DroneState.IDLE,
+            MissionState.ABORTED: DroneState.IDLE,
+            MissionState.ERROR: DroneState.EMERGENCY,
         }
         
         if state in state_map:
@@ -371,14 +414,17 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 actual_travel = mission.actual_travel_time
                 self._add_mission_stat(namespace, iteration, 0, actual_travel=actual_travel)
         
-        # When RTH starts, start tracking for landing detection
-        elif state == MissionState.RETURNING_HOME:
-            self.drone_rth_tracking[namespace] = {
-                'start_time': time.time(),
-                'last_alt': None,
-                'stable_count': 0,
-                'detected': False
-            }
+        # When RTH starts (normal, aborted, or error), start tracking for landing detection
+        elif state in [MissionState.RETURNING_HOME, MissionState.ABORTED, MissionState.ERROR]:
+            # Only start tracking if not already tracking this drone
+            if namespace not in self.drone_rth_tracking:
+                self.drone_rth_tracking[namespace] = {
+                    'start_time': time.time(),
+                    'last_alt': None,
+                    'stable_count': 0,
+                    'detected': False
+                }
+                self._emit_log(f"[{namespace}] RTH tracking started")
     
     def _check_rth_landing(self, namespace: str, altitude: float):
         """Check if a drone in RTH state has landed based on altitude stability."""
@@ -409,6 +455,16 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     # Update mission stats with RTH time
                     self._update_mission_stat_rth(namespace, rth_duration)
                     self._emit_log(f"[{namespace}] Landed after RTH ({rth_duration:.1f}s)")
+                    
+                    # Update mission state to COMPLETED
+                    if self.mission_controller and namespace in self.mission_controller.drone_missions:
+                        mission = self.mission_controller.drone_missions[namespace]
+                        mission.state = MissionState.COMPLETED
+                        # Emit state update to refresh GUI (subscriber will call _update_state_icons)
+                        self.drone_state_update.emit({
+                            'namespace': namespace,
+                            'state': DroneState.IDLE
+                        })
                     
                     # Clean up tracking
                     del self.drone_rth_tracking[namespace]
@@ -496,9 +552,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.monitoring_marker = None
         self.monitoring_circle = None
         
-        # Add CSS and JS
+        # Add CSS and JS (cache-busting with version parameter)
         ui.add_head_html("""
-            <script src='/static/arrows.js'></script>
+            <script src='/static/arrows.js?v=2'></script>
             <style>
                 .drone-card { 
                     min-width: 280px; 
@@ -662,6 +718,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             labels = self.drone_labels[ns]
             
+            # Update RTH debug panel if this is the active monitoring drone
+            # (Do this FIRST, before any early returns, so debug info is always shown)
+            if hasattr(self, 'rth_debug_container') and self.rth_debug_container:
+                # Check if this drone is in MONITORING state
+                if ns in self.drones and self.drones[ns].state == DroneState.MONITORING:
+                    self._update_rth_debug_panel(ns, debug_info)
+            
             # Show/hide the RTH predictor row based on active state
             if 'rth_predictor_row' in labels:
                 if is_active and data_points >= 2:
@@ -693,12 +756,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Update data points count
             if 'rth_data_points' in labels:
                 labels['rth_data_points'].text = f"{data_points} pts"
-            
-            # Update RTH debug panel if this is the active monitoring drone
-            if hasattr(self, 'rth_debug_container') and self.rth_debug_container:
-                # Check if this drone is in MONITORING state
-                if ns in self.drones and self.drones[ns].state == DroneState.MONITORING:
-                    self._update_rth_debug_panel(ns, debug_info)
         
         @self.drone_state_update.subscribe
         def on_state(data: dict):
@@ -770,8 +827,27 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 if self.monitoring_circle:
                     self.map.remove_layer(self.monitoring_circle)
                     self.monitoring_circle = None
+                # Reset input fields
+                if self.lat_input:
+                    self.lat_input.value = '0.0'
+                if self.lon_input:
+                    self.lon_input.value = '0.0'
+                if self.heading_input:
+                    self.heading_input.value = '0'
             else:
                 lat, lon, alt = data['lat'], data['lon'], data['alt']
+                heading = data.get('heading', 0)
+                
+                # Update input fields
+                if self.lat_input:
+                    self.lat_input.value = f"{lat:.6f}"
+                if self.lon_input:
+                    self.lon_input.value = f"{lon:.6f}"
+                if self.alt_input:
+                    self.alt_input.value = f"{alt:.0f}"
+                if self.heading_input:
+                    self.heading_input.value = f"{heading:.0f}"
+                
                 if self.map:
                     if self.monitoring_marker:
                         self.map.remove_layer(self.monitoring_marker)
@@ -893,13 +969,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Define the state flow with shorter labels
         states = [
             ('IDLE', 'hourglass_empty', 'Idle'),
-            ('PREFLIGHT_CHECK', 'checklist', 'Check'),
             ('SETTING_RTH_ALTITUDE', 'height', 'RTH'),
             ('TAKING_OFF', 'flight_takeoff', 'T/O'),
             ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climb'),
             ('TRANSIT_TO_MONITORING', 'flight', 'Transit'),
             ('APPROACHING_POINT', 'gps_fixed', 'Appr'),
             ('MONITORING', 'videocam', 'Mon'),
+            ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),
             ('RETURNING_HOME', 'home', 'RTH'),
             ('COMPLETED', 'check_circle', 'Done'),
         ]
@@ -980,13 +1056,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         states = [
             ('IDLE', 'hourglass_empty', 'Waiting'),
-            ('PREFLIGHT_CHECK', 'checklist', 'Preflight'),
             ('SETTING_RTH_ALTITUDE', 'height', 'Set RTH Alt'),
             ('TAKING_OFF', 'flight_takeoff', 'Takeoff'),
             ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climbing'),
             ('TRANSIT_TO_MONITORING', 'flight', 'Transit'),
             ('APPROACHING_POINT', 'gps_fixed', 'Approaching'),
             ('MONITORING', 'videocam', 'Monitoring'),
+            ('WAITING_FOR_RELAY', 'swap_horiz', 'Waiting Relay'),
             ('RETURNING_HOME', 'home', 'RTH'),
             ('COMPLETED', 'check_circle', 'Done'),
         ]
@@ -1000,13 +1076,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             is_past = self._is_state_past(current_state, state_name, states)
             is_error = current_state in ['ERROR', 'ABORTED']
             
-            if is_current:
+            # Special case: when IDLE, reset all icons to grey (ready for new mission)
+            # IDLE is special - it means drone is ready, not that it's progressing through mission
+            if current_state == 'IDLE':
+                if state_name == 'IDLE':
+                    color = '#4CAF50'  # green - current/ready
+                    bg = '#e8f5e9'
+                else:
+                    color = '#bdbdbd'  # grey - not started
+                    bg = '#fafafa'
+            elif is_current:
                 color = '#4CAF50'  # green - current
                 bg = '#e8f5e9'
             elif is_past:
                 color = '#2196F3'  # blue - completed
                 bg = '#e3f2fd'
-            elif is_error and state_name == current_state:
+            elif is_error:
                 color = '#f44336'  # red - error
                 bg = '#ffebee'
             else:
@@ -1366,8 +1451,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
 
     def _build_drone_card(self, namespace: str, drone: DroneData):
         """Build a compact card for a single drone."""
-        color_idx = list(self.drones.keys()).index(namespace) % len(self.drone_colors)
-        color = self.drone_colors[color_idx]
+        # Use the drone's assigned color (stored in DroneData)
+        color = drone.color if hasattr(drone, 'color') and drone.color else self.drone_colors[0]
         
         with ui.card().classes('drone-card w-full p-3') as card:
             self.drone_cards[namespace] = card

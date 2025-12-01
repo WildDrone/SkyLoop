@@ -23,16 +23,14 @@ logger = logging.getLogger(__name__)
 class MissionState(Enum):
     """Mission state machine states."""
     IDLE = auto()
-    PREFLIGHT_CHECK = auto()
     SETTING_RTH_ALTITUDE = auto()
     TAKING_OFF = auto()
     CLIMBING_TO_ALTITUDE = auto()
     TRANSIT_TO_MONITORING = auto()
     APPROACHING_POINT = auto()  # Within video trigger distance
     MONITORING = auto()
-    WAITING_FOR_RELAY = auto()
+    WAITING_FOR_RELAY = auto()  # Drone is waiting for replacement to arrive
     RETURNING_HOME = auto()
-    LANDING = auto()
     COMPLETED = auto()
     ABORTED = auto()
     ERROR = auto()
@@ -84,6 +82,9 @@ class DroneMissionStatus:
     # Video recording
     video_trigger_distance: float = 50.0
     video_started: bool = False
+    
+    # Relay handoff - drone namespace to replace when this drone arrives at monitoring point
+    replacing_drone: str = ""
     
     # Error handling
     error_message: str = ""
@@ -363,22 +364,20 @@ class MissionController:
         # Create drone mission status
         mission = DroneMissionStatus(
             namespace=namespace,
-            state=MissionState.PREFLIGHT_CHECK,
+            state=MissionState.IDLE,
             assigned_altitude=rth_altitude
         )
         self.drone_missions[namespace] = mission
         self.drone_order = [namespace]
         self.current_drone_index = 0
-        
-        # Preflight check
-        passed, message = self.preflight_check(namespace)
-        if not passed:
+
+        # Check drone health before starting
+        is_healthy, issues = self.check_drone_health(namespace)
+        if not is_healthy:
             mission.state = MissionState.ERROR
-            mission.error_message = message
-            self._emit_event(namespace, f"Preflight failed: {message}")
-            return False
-        
-        # Start mission thread if not running
+            mission.error_message = ", ".join(issues)
+            self._emit_event(namespace, f"Cannot start: {mission.error_message}")
+            return False        # Start mission thread if not running
         if not self._running:
             self._running = True
             self._mission_thread = threading.Thread(target=self._mission_loop, daemon=True)
@@ -432,11 +431,11 @@ class MissionController:
                 assigned_altitude=altitude
             )
         
-        # Preflight check first drone
+        # Check first drone health before starting
         first_drone = drone_list[0]
-        passed, message = self.preflight_check(first_drone)
-        if not passed:
-            self._emit_event(first_drone, f"Preflight failed: {message}")
+        is_healthy, issues = self.check_drone_health(first_drone)
+        if not is_healthy:
+            self._emit_event(first_drone, f"Cannot start: {', '.join(issues)}")
             return False
         
         # Set relay state
@@ -466,12 +465,18 @@ class MissionController:
                 if mission.video_started and self.cmd_stop_recording:
                     self.cmd_stop_recording(ns)
                 
+                # Re-set RTH altitude before RTH command
+                if self.cmd_set_rth_altitude:
+                    self.cmd_set_rth_altitude(ns, mission.assigned_altitude)
+                    time.sleep(0.3)
+                
                 # Command RTH
                 if self.cmd_rth:
                     self.cmd_rth(ns)
                 
                 mission.state = MissionState.ABORTED
-                self._emit_event(ns, "Mission aborted - returning home")
+                self._update_status(ns, mission.state, f"Mission aborted - RTH at {mission.assigned_altitude}m")
+                self._emit_event(ns, f"Mission aborted - RTH at {mission.assigned_altitude}m")
         
         logger.info("Mission stopped - all drones returning home")
     
@@ -560,22 +565,27 @@ class MissionController:
             return
         
         elif mission.state == MissionState.SETTING_RTH_ALTITUDE:
-            # Set RTH altitude before takeoff
+            # Set RTH altitude before takeoff - CRITICAL for safe returns
             if self.cmd_set_rth_altitude:
                 self._emit_event(namespace, f"Setting RTH altitude to {mission.assigned_altitude}m")
-                self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+                
+                # Send command multiple times for reliability
+                for i in range(3):
+                    self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+                    time.sleep(0.5)
+                
+                self._emit_event(namespace, f"RTH altitude confirmed: {mission.assigned_altitude}m")
             else:
                 self._emit_event(namespace, "WARNING: cmd_set_rth_altitude not available!")
             
-            self._update_status(namespace, mission.state, f"Setting RTH altitude to {mission.assigned_altitude}m")
+            self._update_status(namespace, mission.state, f"RTH altitude set to {mission.assigned_altitude}m")
             
-            # Brief wait for command to be processed, then takeoff
+            # Wait for command to be processed by drone
             time.sleep(1.0)
             mission.state = MissionState.TAKING_OFF
+            self._update_status(namespace, mission.state, "Taking off...")
         
         elif mission.state == MissionState.TAKING_OFF:
-            self._update_status(namespace, mission.state, "Taking off...")
-            
             if self.cmd_takeoff:
                 # Send takeoff command twice for reliability
                 self.cmd_takeoff(namespace)
@@ -676,17 +686,60 @@ class MissionController:
                 
                 self._update_status(namespace, mission.state, "Monitoring point reached")
                 self._emit_event(namespace, f"Monitoring started. Travel time: {mission.actual_travel_time:.1f}s")
+                
+                # RELAY HANDOFF: If this drone was replacing another, trigger RTH on the old drone
+                if mission.replacing_drone:
+                    old_ns = mission.replacing_drone
+                    old_mission = self.drone_missions.get(old_ns)
+                    
+                    if old_mission and old_mission.state == MissionState.WAITING_FOR_RELAY:
+                        self._emit_event(namespace, f"Relay handoff: {old_ns} will return home in 10 seconds")
+                        
+                        # Record actual flight time for the old drone
+                        if old_mission.mission_start_time:
+                            actual_flight_time = time.time() - old_mission.mission_start_time
+                            self.flight_time_history.append(actual_flight_time)
+                            if len(self.flight_time_history) > 10:
+                                self.flight_time_history.pop(0)
+                            self._emit_event(old_ns, f"Flight time recorded: {actual_flight_time:.0f}s")
+                        
+                        # Wait 10 seconds before RTH to ensure smooth handoff
+                        self._emit_event(old_ns, "Waiting 10 seconds before RTH...")
+                        time.sleep(10.0)
+                        
+                        # Stop recording on old drone (after wait)
+                        if old_mission.video_started and self.cmd_stop_recording:
+                            self.cmd_stop_recording(old_ns)
+                            self._emit_event(old_ns, "Recording stopped")
+                        
+                        # Re-set RTH altitude before RTH command (to ensure it hasn't been changed)
+                        if self.cmd_set_rth_altitude:
+                            self._emit_event(old_ns, f"Confirming RTH altitude: {old_mission.assigned_altitude}m")
+                            self.cmd_set_rth_altitude(old_ns, old_mission.assigned_altitude)
+                            time.sleep(0.5)
+                        
+                        # Command RTH on old drone
+                        if self.cmd_rth:
+                            self._emit_event(old_ns, f"Commanding RTH at {old_mission.assigned_altitude}m")
+                            self.cmd_rth(old_ns)
+                        
+                        old_mission.state = MissionState.RETURNING_HOME
+                        old_mission.rth_start_time = time.time()
+                        self._update_status(old_ns, old_mission.state, "Returning home after relay")
+                        self._emit_event(old_ns, "Relay complete - returning home")
+                    
+                    # Clear the replacing_drone field
+                    mission.replacing_drone = ""
+                    
+                    # Clear the replacing_drone field
+                    mission.replacing_drone = ""
         
         elif mission.state == MissionState.MONITORING:
             # Drone is monitoring - relay logic handles transition
             pass
         
         elif mission.state == MissionState.RETURNING_HOME:
-            # Drone returning home
-            pass
-        
-        elif mission.state == MissionState.LANDING:
-            # Drone landing
+            # Drone returning home - landing detection is handled by GUI
             pass
     
     def _start_transit(self, namespace: str, mission: DroneMissionStatus):
@@ -713,10 +766,7 @@ class MissionController:
                     target_lon = mon_lon
                     # Keep target_alt as mission.assigned_altitude for vertical separation!
                     self._emit_event(namespace, f"Target: current position of {current_monitoring_ns}")
-        
-        # Calculate bearing to target
-        bearing = self.calculate_bearing(lat, lon, target_lat, target_lon)
-        
+                
         # Determine target heading: use monitoring drone's heading for relay, or configured heading
         target_heading = self.config.monitoring_heading
         if self.relay_state == RelayState.ACTIVE:
@@ -746,6 +796,7 @@ class MissionController:
                 target_alt
             )
             mode_str = "DJI Native"
+        
         elif self.cmd_goto_waypoint:
             # PID: includes yaw control, use target heading
             self.cmd_goto_waypoint(
@@ -753,7 +804,7 @@ class MissionController:
                 target_lat,
                 target_lon,
                 target_alt,
-                target_heading  # Use configured/synced heading instead of bearing
+                target_heading
             )
             mode_str = "PID"
         else:
@@ -850,6 +901,7 @@ class MissionController:
                 self.cmd_start_recording(namespace)
             mission.video_started = True
             mission.state = MissionState.APPROACHING_POINT
+            self._update_status(namespace, mission.state, f"Approaching target ({distance:.1f}m)")
             self._emit_event(namespace, f"Video recording started at {distance:.1f}m from target")
         
         # Check if reached target
@@ -872,6 +924,8 @@ class MissionController:
             mission.monitoring_start_time = time.time()
             mission.actual_travel_time = time.time() - mission.transit_start_time
             self.travel_time_history.append(mission.actual_travel_time)
+            self._update_status(namespace, mission.state, "Monitoring point reached")
+            self._emit_event(namespace, f"Monitoring started (direct). Travel time: {mission.actual_travel_time:.1f}s")
     
     def _update_relay_logic(self):
         """Update relay timing and launch next drone if needed."""
@@ -933,10 +987,10 @@ class MissionController:
         """Launch the next drone in the relay sequence."""
         mission = self.drone_missions[namespace]
         
-        # Preflight check
-        passed, message = self.preflight_check(namespace)
-        if not passed:
-            self._emit_event(namespace, f"Cannot launch: {message}")
+        # Check drone health before launching
+        is_healthy, issues = self.check_drone_health(namespace)
+        if not is_healthy:
+            self._emit_event(namespace, f"Cannot launch: {', '.join(issues)}")
             mission.retry_count += 1
             if mission.retry_count >= self.config.max_retry_count:
                 mission.state = MissionState.ERROR
@@ -954,33 +1008,23 @@ class MissionController:
         
         self._emit_event(namespace, f"Relay drone launching at {mission.assigned_altitude}m")
         
-        # Update current drone to return home
+        # Track which drone this one is replacing (will trigger RTH when this drone arrives)
         old_index = self.current_drone_index
         old_ns = self.drone_order[old_index]
         old_mission = self.drone_missions.get(old_ns)
         
-        if old_mission:
-            # Record actual flight time (from takeoff to return home command)
-            if old_mission.mission_start_time:
-                actual_flight_time = time.time() - old_mission.mission_start_time
-                self.flight_time_history.append(actual_flight_time)
-                if len(self.flight_time_history) > 10:
-                    self.flight_time_history.pop(0)
-                self._emit_event(old_ns, f"Flight time recorded: {actual_flight_time:.0f}s")
+        if old_mission and old_mission.state == MissionState.MONITORING:
+            # Mark this drone as replacing the old one
+            # RTH will be triggered when THIS drone reaches MONITORING state
+            mission.replacing_drone = old_ns
+            self._emit_event(namespace, f"Will replace {old_ns} upon arrival at monitoring point")
             
-            # Stop recording
-            if old_mission.video_started and self.cmd_stop_recording:
-                self.cmd_stop_recording(old_ns)
-            
-            # Command RTH
-            if self.cmd_rth:
-                self.cmd_rth(old_ns)
-            
-            old_mission.state = MissionState.RETURNING_HOME
-            old_mission.rth_start_time = time.time()  # Track RTH start time
-            self._emit_event(old_ns, "Relay handoff - returning home")
+            # Put old drone in WAITING_FOR_RELAY state
+            old_mission.state = MissionState.WAITING_FOR_RELAY
+            self._update_status(old_ns, old_mission.state, f"Waiting for {namespace} to arrive")
+            self._emit_event(old_ns, f"Waiting for {namespace} to arrive for relay handoff")
         
-        # Update current drone index
+        # Update current drone index to the new drone
         self.current_drone_index = index
     
     # ========================================================================
@@ -1241,12 +1285,19 @@ class MissionController:
         if mission.video_started and self.cmd_stop_recording:
             self.cmd_stop_recording(namespace)
         
+        # Re-set RTH altitude before RTH command
+        if self.cmd_set_rth_altitude:
+            self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+            time.sleep(0.3)
+        
         # Force RTH
         if self.cmd_rth:
+            self._emit_event(namespace, f"Emergency RTH at {mission.assigned_altitude}m")
             self.cmd_rth(namespace)
         
         mission.state = MissionState.ERROR
         mission.error_message = f"Emergency: {reason}"
+        self._update_status(namespace, mission.state, f"Emergency: {reason}")
         
         # If this was the active drone in relay, try to launch next
         if self.relay_state == RelayState.ACTIVE and self.get_active_drone() == namespace:
