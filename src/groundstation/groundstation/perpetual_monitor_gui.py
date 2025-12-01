@@ -141,6 +141,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.drone_disconnected_event = Event()
         self.monitoring_point_update = Event()
         self.relay_countdown_update = Event()
+        self.rth_predictor_update = Event()  # RTH predictor info
         self.log_event = Event()
         
         # UI element references (populated when page loads)
@@ -262,6 +263,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             'namespace': namespace,
             'level': level
         })
+        
+        # Also emit RTH predictor update if available
+        if namespace in self.rth_predictors:
+            predictor = self.rth_predictors[namespace]
+            predicted_rth = predictor.predict_rth_time()
+            drain_rate = predictor.get_drain_rate()
+            is_active = predictor.is_active
+            data_points = len(predictor.battery_level)
+            
+            self.rth_predictor_update.emit({
+                'namespace': namespace,
+                'predicted_rth': predicted_rth,
+                'drain_rate': drain_rate,
+                'is_active': is_active,
+                'data_points': data_points
+            })
     
     def _on_remaining_flight_time(self, namespace: str, time_remaining: float):
         """Override flight time callback to emit event."""
@@ -630,6 +647,51 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             if ns in self.drone_labels and 'speed' in self.drone_labels[ns]:
                 self.drone_labels[ns]['speed'].text = f"{speed:.1f}m/s"
+        
+        @self.rth_predictor_update.subscribe
+        def on_rth_predictor(data: dict):
+            ns = data['namespace']
+            predicted_rth = data['predicted_rth']
+            drain_rate = data['drain_rate']
+            is_active = data['is_active']
+            data_points = data['data_points']
+            
+            if ns not in self.drone_labels:
+                return
+            
+            labels = self.drone_labels[ns]
+            
+            # Show/hide the RTH predictor row based on active state
+            if 'rth_predictor_row' in labels:
+                if is_active and data_points >= 2:
+                    labels['rth_predictor_row'].style('display: flex')
+                else:
+                    labels['rth_predictor_row'].style('display: none')
+                    return
+            
+            # Update predicted RTH time
+            if 'rth_predicted' in labels:
+                if predicted_rth != float('inf') and predicted_rth > 0:
+                    minutes = int(predicted_rth // 60)
+                    seconds = int(predicted_rth % 60)
+                    color = '#2e7d32' if predicted_rth > 300 else '#f57c00' if predicted_rth > 120 else '#c62828'
+                    labels['rth_predicted'].text = f"{minutes}:{seconds:02d}"
+                    labels['rth_predicted'].style(f'color: {color}; font-weight: bold')
+                else:
+                    labels['rth_predicted'].text = "--:--"
+                    labels['rth_predicted'].style('color: #9e9e9e')
+            
+            # Update drain rate (%/min)
+            if 'rth_drain_rate' in labels:
+                drain_per_min = drain_rate * 60  # Convert from %/s to %/min
+                if drain_per_min > 0:
+                    labels['rth_drain_rate'].text = f"{drain_per_min:.2f}%/min"
+                else:
+                    labels['rth_drain_rate'].text = "--%/min"
+            
+            # Update data points count
+            if 'rth_data_points' in labels:
+                labels['rth_data_points'].text = f"{data_points} pts"
         
         @self.drone_state_update.subscribe
         def on_state(data: dict):
@@ -1177,6 +1239,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         val = float(e.args)
                         self.send_gimbal_pitch(ns, val)
                     gimbal_knob.on('update:model-value', update_gimbal)
+            
+            # RTH Predictor row (only visible when active)
+            with ui.row().classes('w-full items-center gap-2 mt-1') as rth_row:
+                rth_row.style('display: none')  # Hidden by default
+                self.drone_labels[namespace]['rth_predictor_row'] = rth_row
+                ui.icon('analytics').style('font-size: 20px; color: #1976d2')
+                ui.label('RTH Predictor:').classes('text-sm text-gray-600')
+                with ui.row().classes('items-center gap-1').tooltip('Predicted time until RTH triggers'):
+                    ui.icon('timer').style('font-size: 18px; color: #1976d2')
+                    self.drone_labels[namespace]['rth_predicted'] = ui.label('--:--').classes('text-sm font-bold').style('color: #1976d2')
+                with ui.row().classes('items-center gap-1').tooltip('Battery drain rate'):
+                    ui.icon('trending_down').style('font-size: 18px; color: #f57c00')
+                    self.drone_labels[namespace]['rth_drain_rate'] = ui.label('--%/min').classes('text-sm').style('color: #f57c00')
+                with ui.row().classes('items-center gap-1').tooltip('Data points collected'):
+                    ui.icon('show_chart').style('font-size: 18px; color: #388e3c')
+                    self.drone_labels[namespace]['rth_data_points'] = ui.label('0 pts').classes('text-sm').style('color: #388e3c')
             
             # Hidden position label (for data, not display)
             self.drone_labels[namespace]['position'] = ui.label().classes('hidden')

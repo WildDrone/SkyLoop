@@ -142,6 +142,12 @@ class DjiNode(Node):
             Float64, 'time_to_landing_spot', 10)
         self.max_radius_can_fly_and_go_home_pub = self.create_publisher(
             Float64, 'max_radius_can_fly_and_go_home', 10)
+        
+        # Battery needed publishers
+        self.battery_needed_to_go_home_pub = self.create_publisher(
+            Float64, 'battery_needed_to_go_home', 10)
+        self.battery_needed_to_land_pub = self.create_publisher(
+            Float64, 'battery_needed_to_land', 10)
 
         # Camera Publisher
         self.camera_is_recording_pub = self.create_publisher(
@@ -422,6 +428,12 @@ class DjiNode(Node):
                 Float64(data=float(telemetry.get('totalTime', 0))))
             self.max_radius_can_fly_and_go_home_pub.publish(
                 Float64(data=float(telemetry.get('maxRadiusCanFlyAndGoHome', 0))))
+            
+            # Battery needed information
+            self.battery_needed_to_go_home_pub.publish(
+                Float64(data=float(telemetry.get('batteryNeededToGoHome', 0))))
+            self.battery_needed_to_land_pub.publish(
+                Float64(data=float(telemetry.get('batteryNeededToLand', 0))))
             
             # Camera recording status
             self.camera_is_recording_pub.publish(

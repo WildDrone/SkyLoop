@@ -83,6 +83,11 @@ class DroneData:
     time_needed_to_land: float = 0.0  # seconds
     distance_to_home: float = 0.0  # meters
     
+    # Battery thresholds (for RTH predictor)
+    battery_needed_to_go_home: float = 0.0  # percentage
+    battery_needed_to_land: float = 0.0  # percentage
+    flight_mode: str = "UNKNOWN"
+    
     # Home location
     home_latitude: float = 0.0
     home_longitude: float = 0.0
@@ -106,6 +111,130 @@ class DroneData:
     # Timestamps
     last_telemetry_update: float = 0.0
     connection_time: float = 0.0
+
+
+class DroneRTHPredictor:
+    """
+    Predicts when DJI will trigger RTH based on battery drain.
+    
+    Uses linear regression on battery history to predict when battery will reach
+    the RTH trigger threshold (batteryNeededToGoHome + margin).
+    
+    This is a simplified version for ROS2 integration - receives data from DroneData.
+    """
+    
+    MAX_POINTS = 600  # 10 minutes at 1Hz
+    RTH_TRIGGER_MARGIN = 2  # RTH triggers when battery <= batt_needed_rth + margin
+    
+    def __init__(self):
+        from collections import deque
+        import numpy as np
+        
+        # Data storage (deques for sliding window)
+        self.timestamps = deque(maxlen=self.MAX_POINTS)
+        self.battery_level = deque(maxlen=self.MAX_POINTS)
+        self.batt_needed_rth = deque(maxlen=self.MAX_POINTS)
+        
+        # State
+        self.is_active = False  # Only predict when drone is in MONITORING state
+        self.start_time = None
+        
+    def reset(self):
+        """Reset the predictor when drone state changes."""
+        self.timestamps.clear()
+        self.battery_level.clear()
+        self.batt_needed_rth.clear()
+        self.start_time = None
+        self.is_active = False
+    
+    def update(self, battery: float, batt_needed_to_go_home: float, is_monitoring: bool):
+        """
+        Update predictor with new telemetry data.
+        
+        Args:
+            battery: Current battery percentage
+            batt_needed_to_go_home: DJI's batteryNeededToGoHome value
+            is_monitoring: Whether drone is currently in MONITORING state
+        """
+        import time
+        
+        # Start/stop tracking based on monitoring state
+        if is_monitoring and not self.is_active:
+            # Just started monitoring - reset and start fresh
+            self.reset()
+            self.is_active = True
+            self.start_time = time.time()
+        elif not is_monitoring and self.is_active:
+            # Stopped monitoring - deactivate but keep data for reference
+            self.is_active = False
+            return
+        
+        if not self.is_active:
+            return
+            
+        elapsed = time.time() - self.start_time
+        self.timestamps.append(elapsed)
+        self.battery_level.append(battery)
+        self.batt_needed_rth.append(batt_needed_to_go_home)
+    
+    def predict_rth_time(self) -> float:
+        """
+        Predict time until RTH is triggered in seconds.
+        
+        Returns:
+            Predicted seconds until RTH, or float('inf') if cannot predict.
+        """
+        import numpy as np
+        
+        if not self.is_active or len(self.battery_level) < 2:
+            return float('inf')
+        
+        # Get all data for regression
+        times = np.array(list(self.timestamps))
+        batteries = np.array(list(self.battery_level))
+        
+        # Linear regression on ALL points: battery = a*t + b
+        try:
+            slope, intercept = np.polyfit(times, batteries, 1)
+        except:
+            return float('inf')
+        
+        # slope should be negative (battery draining)
+        if slope >= 0:
+            return float('inf')  # Battery not draining
+        
+        # Current RTH threshold
+        current_batt_needed = self.batt_needed_rth[-1]
+        rth_threshold = current_batt_needed + self.RTH_TRIGGER_MARGIN
+        
+        # Current time
+        current_time = times[-1]
+        
+        # Find when battery line crosses threshold
+        # battery(t) = slope * t + intercept = rth_threshold
+        # t_rth = (rth_threshold - intercept) / slope
+        t_rth = (rth_threshold - intercept) / slope
+        
+        # Time until RTH
+        time_until_rth = t_rth - current_time
+        
+        return max(0.0, time_until_rth)
+    
+    def get_drain_rate(self) -> float:
+        """Get battery drain rate in %/second."""
+        import numpy as np
+        
+        if len(self.timestamps) < 2:
+            return 0.0
+        
+        times = np.array(list(self.timestamps))
+        batteries = np.array(list(self.battery_level))
+        
+        try:
+            slope, intercept = np.polyfit(times, batteries, 1)
+            return -slope  # Negative slope = positive drain rate
+        except:
+            return 0.0
 
 
 @dataclass
@@ -273,6 +402,9 @@ class PerpetualMonitorNode(Node):
         self.drone_subscribers: Dict[str, Dict[str, any]] = {}
         self.drone_processes: Dict[str, subprocess.Popen] = {}  # Controller node processes
         
+        # RTH Predictors (one per drone for relay timing)
+        self.rth_predictors: Dict[str, DroneRTHPredictor] = {}
+        
         # Mission state
         self.mission = RelayMission()
         self.monitoring_point = MonitoringPoint()
@@ -325,7 +457,7 @@ class PerpetualMonitorNode(Node):
         
         mc.get_drone_heading = lambda ns: self.drones[ns].heading if ns in self.drones else 0.0
         mc.get_drone_gimbal_pitch = lambda ns: self.drones[ns].gimbal_pitch if ns in self.drones else 0.0
-        mc.get_remaining_flight_time = lambda ns: self.drones[ns].remaining_flight_time if ns in self.drones else 0.0
+        mc.get_remaining_flight_time = self._get_remaining_flight_time_with_prediction
         mc.get_battery_level = lambda ns: self.drones[ns].battery_level if ns in self.drones else 0.0
         mc.get_satellite_count = lambda ns: self.drones[ns].satellite_count if ns in self.drones else 0
         mc.get_is_recording = lambda ns: self.drones[ns].is_recording if ns in self.drones else False
@@ -338,6 +470,36 @@ class PerpetualMonitorNode(Node):
         mc.on_status_update = self._on_mission_status_update
         mc.on_relay_countdown = self._on_relay_countdown_update
         mc.on_mission_event = self._on_mission_event
+    
+    def _get_remaining_flight_time_with_prediction(self, namespace: str) -> float:
+        """
+        Get remaining flight time for a drone.
+        
+        Uses RTH predictor when drone is in MONITORING state for accurate relay timing.
+        Falls back to DJI's remaining_flight_time otherwise.
+        
+        Args:
+            namespace: The drone's ROS namespace
+            
+        Returns:
+            Remaining flight time in seconds
+        """
+        if namespace not in self.drones:
+            return 0.0
+        
+        drone = self.drones[namespace]
+        
+        # Use RTH predictor when drone is in MONITORING state
+        if drone.state == DroneState.MONITORING and namespace in self.rth_predictors:
+            predictor = self.rth_predictors[namespace]
+            predicted_time = predictor.predict_rth_time()
+            
+            # Use prediction if valid (not infinity and reasonable)
+            if predicted_time != float('inf') and predicted_time > 0:
+                return predicted_time
+        
+        # Fallback to DJI's remaining_flight_time
+        return drone.remaining_flight_time
     
     def _on_mission_status_update(self, namespace: str, state: MissionState, message: str):
         """Handle mission status updates from controller."""
@@ -443,6 +605,9 @@ class PerpetualMonitorNode(Node):
         )
         self.drones[namespace] = drone
         
+        # Create RTH predictor for this drone
+        self.rth_predictors[namespace] = DroneRTHPredictor()
+        
         # Set up ROS subscribers for this drone's telemetry
         self._setup_drone_subscribers(namespace)
         
@@ -513,6 +678,10 @@ class PerpetualMonitorNode(Node):
         # Remove from mission if needed
         if namespace in self.mission.drones_in_mission:
             self.mission.drones_in_mission.remove(namespace)
+        
+        # Clean up RTH predictor
+        if namespace in self.rth_predictors:
+            del self.rth_predictors[namespace]
         
         # Remove drone data
         del self.drones[namespace]
@@ -611,6 +780,23 @@ class PerpetualMonitorNode(Node):
             Float64, f"{namespace}/gimbal_pitch",
             lambda msg, ns=namespace: self._on_gimbal_pitch(ns, msg.data), 10
         )
+        
+        # Battery thresholds (for RTH predictor)
+        self.drone_subscribers[namespace]['battery_needed_to_go_home'] = self.create_subscription(
+            Float64, f"{namespace}/battery_needed_to_go_home",
+            lambda msg, ns=namespace: self._on_battery_needed_to_go_home(ns, msg.data), 10
+        )
+        
+        self.drone_subscribers[namespace]['battery_needed_to_land'] = self.create_subscription(
+            Float64, f"{namespace}/battery_needed_to_land",
+            lambda msg, ns=namespace: self._on_battery_needed_to_land(ns, msg.data), 10
+        )
+        
+        # Flight mode (for RTH predictor - to know when drone is in MONITORING state)
+        self.drone_subscribers[namespace]['flight_mode'] = self.create_subscription(
+            String, f"{namespace}/flight_mode",
+            lambda msg, ns=namespace: self._on_flight_mode(ns, msg.data), 10
+        )
     
     def _setup_drone_publishers(self, namespace: str):
         """Set up all command publishers for a drone."""
@@ -683,7 +869,19 @@ class PerpetualMonitorNode(Node):
     
     def _on_battery(self, namespace: str, level: float):
         if namespace in self.drones:
-            self.drones[namespace].battery_level = level
+            drone = self.drones[namespace]
+            drone.battery_level = level
+            
+            # Update RTH predictor if available
+            if namespace in self.rth_predictors:
+                # Check if drone is in MONITORING state
+                is_monitoring = drone.state == DroneState.MONITORING
+                self.rth_predictors[namespace].update(
+                    battery=level,
+                    batt_needed_to_go_home=drone.battery_needed_to_go_home,
+                    is_monitoring=is_monitoring
+                )
+            
             if self.ui_handler:
                 self.ui_handler.update_drone_battery(namespace, level)
     
@@ -743,6 +941,18 @@ class PerpetualMonitorNode(Node):
     def _on_gimbal_pitch(self, namespace: str, pitch: float):
         if namespace in self.drones:
             self.drones[namespace].gimbal_pitch = pitch
+    
+    def _on_battery_needed_to_go_home(self, namespace: str, percentage: float):
+        if namespace in self.drones:
+            self.drones[namespace].battery_needed_to_go_home = percentage
+    
+    def _on_battery_needed_to_land(self, namespace: str, percentage: float):
+        if namespace in self.drones:
+            self.drones[namespace].battery_needed_to_land = percentage
+    
+    def _on_flight_mode(self, namespace: str, mode: str):
+        if namespace in self.drones:
+            self.drones[namespace].flight_mode = mode
     
     # ========================================================================
     # DRONE COMMANDS

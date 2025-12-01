@@ -250,12 +250,36 @@ class DJIInterface:
         return self.getTelemetry().get("timeNeededToLand", 0)
     
     def getTotalTime(self):
-        """Get total flight time in seconds."""
+        """Get total time needed (go home + land) in seconds."""
         return self.getTelemetry().get("totalTime", 0)
     
     def getMaxRadiusCanFlyAndGoHome(self):
         """Get maximum radius the drone can fly and still return home."""
         return self.getTelemetry().get("maxRadiusCanFlyAndGoHome", 0)
+    
+    def getRemainingCharge(self):
+        """Get remaining battery charge percentage."""
+        return self.getTelemetry().get("remainingCharge", 0)
+    
+    def getBatteryNeededToLand(self):
+        """Get battery percentage needed to land."""
+        return self.getTelemetry().get("batteryNeededToLand", 0)
+    
+    def getBatteryNeededToGoHome(self):
+        """Get battery percentage needed to return home."""
+        return self.getTelemetry().get("batteryNeededToGoHome", 0)
+    
+    def getSeriousLowBatteryThreshold(self):
+        """Get serious low battery warning threshold percentage."""
+        return self.getTelemetry().get("seriousLowBatteryThreshold", 0)
+    
+    def getLowBatteryThreshold(self):
+        """Get low battery warning threshold percentage."""
+        return self.getTelemetry().get("lowBatteryThreshold", 0)
+    
+    def getFlightMode(self):
+        """Get the current flight mode (e.g., 'MANUAL', 'GPS', 'GO_HOME', etc.)."""
+        return self.getTelemetry().get("flightMode", "UNKNOWN")
 
     # ==================== Commands (HTTP POST on port 8080) ====================
 
@@ -490,6 +514,13 @@ if __name__ == '__main__':
                 print(f"  Time to RTH: {dji.getTimeNeededToGoHome()} s")
                 print(f"  Time to Land:{dji.getTimeNeededToLand()} s")
                 print(f"  Max Radius:  {dji.getMaxRadiusCanFlyAndGoHome()} m")
+                print(f"  --- Battery Thresholds ---")
+                print(f"  Remaining:   {dji.getRemainingCharge()}%")
+                print(f"  Need Land:   {dji.getBatteryNeededToLand()}%")
+                print(f"  Need RTH:    {dji.getBatteryNeededToGoHome()}%")
+                print(f"  Low Batt:    {dji.getLowBatteryThreshold()}%")
+                print(f"  Serious Low: {dji.getSeriousLowBatteryThreshold()}%")
+                print(f"  Flight Mode: {dji.getFlightMode()}")
             else:
                 print("Waiting for telemetry data...")
             
