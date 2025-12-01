@@ -267,17 +267,15 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Also emit RTH predictor update if available
         if namespace in self.rth_predictors:
             predictor = self.rth_predictors[namespace]
-            predicted_rth = predictor.predict_rth_time()
-            drain_rate = predictor.get_drain_rate()
-            is_active = predictor.is_active
-            data_points = len(predictor.battery_level)
+            debug_info = predictor.get_debug_info()
+            
+            # Add DJI's remaining_flight_time for comparison
+            if namespace in self.drones:
+                debug_info['dji_remaining_flight_time'] = self.drones[namespace].remaining_flight_time
             
             self.rth_predictor_update.emit({
                 'namespace': namespace,
-                'predicted_rth': predicted_rth,
-                'drain_rate': drain_rate,
-                'is_active': is_active,
-                'data_points': data_points
+                'debug_info': debug_info
             })
     
     def _on_remaining_flight_time(self, namespace: str, time_remaining: float):
@@ -421,12 +419,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         tracking['last_alt'] = altitude
     
-    def _on_relay_countdown_update(self, countdown: float, next_drone: str):
+    def _on_relay_countdown_update(self, countdown: float, next_drone: str, timing_breakdown: dict = None):
         """Override relay countdown callback to emit event."""
-        super()._on_relay_countdown_update(countdown, next_drone)
+        super()._on_relay_countdown_update(countdown, next_drone, timing_breakdown)
         self.relay_countdown_update.emit({
             'countdown': countdown,
-            'next_drone': next_drone
+            'next_drone': next_drone,
+            'timing_breakdown': timing_breakdown or {}
         })
     
     def connect_drone(self, ip_address: str, namespace: str = None) -> bool:
@@ -651,10 +650,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         @self.rth_predictor_update.subscribe
         def on_rth_predictor(data: dict):
             ns = data['namespace']
-            predicted_rth = data['predicted_rth']
-            drain_rate = data['drain_rate']
-            is_active = data['is_active']
-            data_points = data['data_points']
+            debug_info = data.get('debug_info', {})
+            
+            predicted_rth = debug_info.get('predicted_rth_seconds', float('inf'))
+            drain_rate = debug_info.get('drain_rate_per_min', 0.0) / 60  # Convert back to %/s for existing code
+            is_active = debug_info.get('is_active', False)
+            data_points = debug_info.get('data_points', 0)
             
             if ns not in self.drone_labels:
                 return
@@ -692,6 +693,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Update data points count
             if 'rth_data_points' in labels:
                 labels['rth_data_points'].text = f"{data_points} pts"
+            
+            # Update RTH debug panel if this is the active monitoring drone
+            if hasattr(self, 'rth_debug_container') and self.rth_debug_container:
+                # Check if this drone is in MONITORING state
+                if ns in self.drones and self.drones[ns].state == DroneState.MONITORING:
+                    self._update_rth_debug_panel(ns, debug_info)
         
         @self.drone_state_update.subscribe
         def on_state(data: dict):
@@ -781,6 +788,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         def on_countdown(data: dict):
             countdown = data['countdown']
             next_drone = data['next_drone']
+            timing_breakdown = data.get('timing_breakdown', {})
+            
+            # Update timing breakdown display
+            if timing_breakdown and hasattr(self, 'timing_breakdown_container'):
+                self.timing_breakdown_container.style('display: flex;')
+                
+                remaining = timing_breakdown.get('remaining_flight_time', 0)
+                travel = timing_breakdown.get('avg_travel_time', 0)
+                buffer = timing_breakdown.get('safety_buffer', 0)
+                
+                if hasattr(self, 'remaining_time_label'):
+                    self.remaining_time_label.text = f"To RTH: {int(remaining//60)}:{int(remaining%60):02d}"
+                if hasattr(self, 'travel_time_label'):
+                    self.travel_time_label.text = f"Travel: {int(travel//60)}:{int(travel%60):02d}"
+                if hasattr(self, 'buffer_time_label'):
+                    self.buffer_time_label.text = f"Buffer: {int(buffer//60)}:{int(buffer%60):02d}"
             
             if self.countdown_label:
                 if countdown > 0:
@@ -1053,6 +1076,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Progress bar for countdown
                 self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=orange').classes('mt-1')
                 
+                # Timing breakdown row (hidden by default, shows formula: Countdown = ToRTH - Travel - Buffer)
+                with ui.row().classes('w-full gap-1 mt-1 text-xs').style('display: none;') as self.timing_breakdown_container:
+                    with ui.row().classes('items-center gap-1 p-1 rounded').style('background: #e3f2fd;'):
+                        ui.icon('battery_alert', size='xs').style('color: #1565c0;')
+                        self.remaining_time_label = ui.label("To RTH: --").style('color: #1565c0; font-size: 11px;')
+                    with ui.row().classes('items-center gap-1 p-1 rounded').style('background: #fff3e0;'):
+                        ui.icon('route', size='xs').style('color: #e65100;')
+                        self.travel_time_label = ui.label("Travel: --").style('color: #e65100; font-size: 11px;')
+                    with ui.row().classes('items-center gap-1 p-1 rounded').style('background: #fce4ec;'):
+                        ui.icon('security', size='xs').style('color: #c2185b;')
+                        self.buffer_time_label = ui.label("Buffer: --").style('color: #c2185b; font-size: 11px;')
+                
                 # Relay alert (hidden by default)
                 with ui.row().classes('w-full items-center gap-2 mt-2 p-2 rounded').style('background: #fff3e0; border-left: 3px solid #ff9800; display: none;') as self.relay_alert_container:
                     self.relay_alert_icon = ui.icon('notifications_active').classes('text-xl').style('color: #e65100;')
@@ -1179,6 +1214,144 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         
                         with ui.scroll_area().classes('w-full').style('height: 80px;') as self.mission_stats_scroll:
                             self.mission_stats_container = ui.column().classes('w-full gap-0')
+                
+                # RTH Prediction Debug Panel (expansion)
+                with ui.expansion("RTH Prediction Debug", icon='bug_report').classes('w-full').style('background: #fff8e1;') as self.rth_debug_expansion:
+                    with ui.card().classes('w-full p-2').style('background: #fffde7;') as self.rth_debug_container:
+                        # Formula explanation
+                        with ui.row().classes('w-full items-center gap-2 pb-2').style('border-bottom: 1px solid #ffe082;'):
+                            ui.icon('calculate').style('color: #f57c00;')
+                            ui.label("Countdown = Predicted RTH - Travel Time - Buffer").classes('text-xs font-mono').style('color: #e65100;')
+                        
+                        # Debug info grid
+                        with ui.grid(columns=2).classes('w-full gap-x-4 gap-y-1 mt-2'):
+                            # Left column - Battery & Threshold
+                            ui.label("Current Battery:").classes('text-xs font-bold')
+                            self.rth_debug_battery = ui.label("--").classes('text-xs font-mono')
+                            
+                            ui.label("Batt Needed (now):").classes('text-xs font-bold')
+                            self.rth_debug_batt_needed = ui.label("--").classes('text-xs font-mono')
+                            
+                            ui.label("Batt Needed (MAX):").classes('text-xs font-bold').style('color: #d32f2f;')
+                            self.rth_debug_batt_max = ui.label("--").classes('text-xs font-mono font-bold').style('color: #d32f2f;')
+                            
+                            ui.label("RTH Threshold:").classes('text-xs font-bold').tooltip('MAX BattNeeded + 2%')
+                            self.rth_debug_threshold = ui.label("--").classes('text-xs font-mono')
+                            
+                            ui.label("Drain Rate:").classes('text-xs font-bold')
+                            self.rth_debug_drain = ui.label("--").classes('text-xs font-mono')
+                            
+                            ui.label("Data Points:").classes('text-xs font-bold')
+                            self.rth_debug_points = ui.label("--").classes('text-xs font-mono')
+                            
+                            ui.label("Monitoring Time:").classes('text-xs font-bold')
+                            self.rth_debug_elapsed = ui.label("--").classes('text-xs font-mono')
+                        
+                        ui.separator().classes('my-2')
+                        
+                        # Comparison section
+                        with ui.row().classes('w-full gap-4'):
+                            with ui.column().classes('flex-1'):
+                                ui.label("Predicted RTH:").classes('text-xs font-bold').style('color: #1565c0;')
+                                self.rth_debug_predicted = ui.label("--").classes('text-lg font-bold font-mono').style('color: #1565c0;')
+                            with ui.column().classes('flex-1'):
+                                ui.label("DJI Flight Time:").classes('text-xs font-bold').style('color: #7b1fa2;')
+                                self.rth_debug_dji = ui.label("--").classes('text-lg font-bold font-mono').style('color: #7b1fa2;')
+                            with ui.column().classes('flex-1'):
+                                ui.label("Difference:").classes('text-xs font-bold').style('color: #d32f2f;')
+                                self.rth_debug_diff = ui.label("--").classes('text-lg font-bold font-mono').style('color: #d32f2f;')
+                        
+                        # Regression details
+                        ui.separator().classes('my-2')
+                        with ui.row().classes('w-full gap-2'):
+                            ui.label("Regression:").classes('text-xs font-bold')
+                            self.rth_debug_regression = ui.label("battery(t) = slope × t + intercept").classes('text-xs font-mono').style('color: #616161;')
+                        
+                        # Live regression chart
+                        ui.separator().classes('my-2')
+                        with ui.row().classes('w-full items-center gap-2'):
+                            ui.icon('show_chart').style('color: #1565c0;')
+                            ui.label("Live Battery Regression").classes('text-xs font-bold')
+                        
+                        # Chart using ECharts
+                        self.rth_chart = ui.echart({
+                            'animation': False,
+                            'grid': {'left': '12%', 'right': '5%', 'top': '15%', 'bottom': '18%'},
+                            'legend': {
+                                'show': True,
+                                'top': 0,
+                                'textStyle': {'fontSize': 9},
+                                'itemWidth': 12,
+                                'itemHeight': 8
+                            },
+                            'xAxis': {
+                                'type': 'value',
+                                'name': 'Time (min)',
+                                'nameLocation': 'middle',
+                                'nameGap': 22,
+                                'min': 0,
+                                'axisLabel': {'fontSize': 9}
+                            },
+                            'yAxis': {
+                                'type': 'value',
+                                'name': 'Battery %',
+                                'nameLocation': 'middle',
+                                'nameGap': 32,
+                                'min': 0,
+                                'max': 100,
+                                'axisLabel': {'fontSize': 9}
+                            },
+                            'series': [
+                                {
+                                    'name': 'Battery',
+                                    'type': 'scatter',
+                                    'data': [],
+                                    'symbolSize': 5,
+                                    'itemStyle': {'color': '#1976d2'}
+                                },
+                                {
+                                    'name': 'Regression',
+                                    'type': 'line',
+                                    'data': [],
+                                    'lineStyle': {'color': '#4caf50', 'width': 2},
+                                    'symbol': 'none'
+                                },
+                                {
+                                    'name': 'MAX Threshold',
+                                    'type': 'line',
+                                    'data': [],
+                                    'lineStyle': {'color': '#f44336', 'width': 2, 'type': 'dashed'},
+                                    'symbol': 'none'
+                                },
+                                {
+                                    'name': 'RTH Point',
+                                    'type': 'scatter',
+                                    'data': [],
+                                    'symbolSize': 14,
+                                    'symbol': 'triangle',
+                                    'itemStyle': {'color': '#f44336'}
+                                },
+                                {
+                                    'name': 'Now',
+                                    'type': 'line',
+                                    'data': [],
+                                    'lineStyle': {'color': '#ff9800', 'width': 2, 'type': 'dotted'},
+                                    'symbol': 'none'
+                                },
+                                {
+                                    'name': 'Current Batt',
+                                    'type': 'scatter',
+                                    'data': [],
+                                    'symbolSize': 10,
+                                    'symbol': 'circle',
+                                    'itemStyle': {'color': '#ff9800', 'borderColor': '#fff', 'borderWidth': 2}
+                                }
+                            ],
+                            'tooltip': {
+                                'trigger': 'item',
+                                'formatter': '{a}: {c}'
+                            }
+                        }).classes('w-full').style('height: 200px;')
             
             # Debug Console (hidden by default, replaces above when enabled)
             with ui.card().classes('w-full').style('display: none;') as self.debug_console_container:
@@ -1648,6 +1821,120 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         ui.notify('All trajectories aborted', type='info')
         self._emit_log("[ABORT] All trajectories aborted")
     
+    def _update_rth_debug_panel(self, namespace: str, debug_info: dict):
+        """Update the RTH prediction debug panel with current values."""
+        # Current battery
+        current_batt = debug_info.get('current_battery', 0)
+        if hasattr(self, 'rth_debug_battery'):
+            self.rth_debug_battery.text = f"{current_batt:.1f}%"
+        
+        # Battery needed to go home (current value)
+        batt_needed = debug_info.get('batt_needed_to_go_home', 0)
+        if hasattr(self, 'rth_debug_batt_needed'):
+            self.rth_debug_batt_needed.text = f"{batt_needed:.1f}%"
+        
+        # Battery needed to go home (MAX value - used for prediction)
+        max_batt_needed = debug_info.get('max_batt_needed_to_go_home', 0)
+        if hasattr(self, 'rth_debug_batt_max'):
+            self.rth_debug_batt_max.text = f"{max_batt_needed:.1f}%"
+        
+        # RTH threshold (MAX batt_needed + 2%)
+        threshold = debug_info.get('rth_threshold', 0)
+        if hasattr(self, 'rth_debug_threshold'):
+            self.rth_debug_threshold.text = f"{threshold:.1f}%"
+            # Highlight if close to threshold
+            if current_batt > 0 and (current_batt - threshold) < 10:
+                self.rth_debug_threshold.style('color: #d32f2f; font-weight: bold;')
+            else:
+                self.rth_debug_threshold.style('color: inherit;')
+        
+        # Drain rate
+        drain_rate = debug_info.get('drain_rate_per_min', 0)
+        if hasattr(self, 'rth_debug_drain'):
+            self.rth_debug_drain.text = f"{drain_rate:.2f}%/min"
+        
+        # Data points
+        data_points = debug_info.get('data_points', 0)
+        if hasattr(self, 'rth_debug_points'):
+            self.rth_debug_points.text = f"{data_points}"
+        
+        # Elapsed monitoring time
+        elapsed = debug_info.get('elapsed_since_monitoring', 0)
+        if hasattr(self, 'rth_debug_elapsed'):
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
+            self.rth_debug_elapsed.text = f"{mins}:{secs:02d}"
+        
+        # Predicted RTH time
+        predicted = debug_info.get('predicted_rth_seconds', float('inf'))
+        if hasattr(self, 'rth_debug_predicted'):
+            if predicted != float('inf') and predicted > 0:
+                mins = int(predicted // 60)
+                secs = int(predicted % 60)
+                self.rth_debug_predicted.text = f"{mins}:{secs:02d}"
+            else:
+                self.rth_debug_predicted.text = "--:--"
+        
+        # DJI remaining flight time
+        dji_time = debug_info.get('dji_remaining_flight_time', 0)
+        if hasattr(self, 'rth_debug_dji'):
+            mins = int(dji_time // 60)
+            secs = int(dji_time % 60)
+            self.rth_debug_dji.text = f"{mins}:{secs:02d}"
+        
+        # Difference (predicted - DJI)
+        if hasattr(self, 'rth_debug_diff'):
+            if predicted != float('inf') and predicted > 0 and dji_time > 0:
+                diff = predicted - dji_time
+                mins = int(abs(diff) // 60)
+                secs = int(abs(diff) % 60)
+                sign = "+" if diff >= 0 else "-"
+                self.rth_debug_diff.text = f"{sign}{mins}:{secs:02d}"
+                # Color based on sign
+                if diff < 0:
+                    self.rth_debug_diff.style('color: #d32f2f;')  # Red - prediction is shorter
+                else:
+                    self.rth_debug_diff.style('color: #2e7d32;')  # Green - prediction is longer
+            else:
+                self.rth_debug_diff.text = "--:--"
+        
+        # Regression equation
+        slope = debug_info.get('slope', 0)
+        intercept = debug_info.get('intercept', 0)
+        if hasattr(self, 'rth_debug_regression'):
+            if slope != 0:
+                self.rth_debug_regression.text = f"batt(t) = {slope:.4f}×t + {intercept:.2f}"
+            else:
+                self.rth_debug_regression.text = "Not enough data"
+        
+        # Update live chart
+        if hasattr(self, 'rth_chart') and self.rth_chart:
+            battery_points = debug_info.get('chart_battery_points', [])
+            regression_line = debug_info.get('chart_regression_line', [])
+            threshold_line = debug_info.get('chart_threshold_line', [])
+            rth_point = debug_info.get('chart_rth_point', [])
+            current_time_line = debug_info.get('chart_current_time_line', [])
+            current_point = debug_info.get('chart_current_point', [])
+            
+            # Calculate x-axis max (add some padding)
+            if battery_points:
+                max_time = max(p[0] for p in battery_points)
+                if rth_point:
+                    max_time = max(max_time, rth_point[0][0])
+                x_max = max(5, max_time + 2)  # At least 5 min, plus 2 min padding
+            else:
+                x_max = 10
+            
+            # Update chart options
+            self.rth_chart.options['xAxis']['max'] = x_max
+            self.rth_chart.options['series'][0]['data'] = battery_points  # Battery scatter (blue dots)
+            self.rth_chart.options['series'][1]['data'] = regression_line  # Regression line (green)
+            self.rth_chart.options['series'][2]['data'] = threshold_line  # MAX RTH threshold (red dashed)
+            self.rth_chart.options['series'][3]['data'] = rth_point  # RTH crossing point (red triangle)
+            self.rth_chart.options['series'][4]['data'] = current_time_line  # Current time vertical (orange dotted)
+            self.rth_chart.options['series'][5]['data'] = current_point  # Current position (orange circle)
+            self.rth_chart.update()
+    
     def _clear_mission_stats(self):
         """Clear mission statistics history."""
         self.mission_stats_history.clear()
@@ -1891,9 +2178,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         with self.mission_stats_container:
             for stat in self.mission_stats_history:
                 with ui.row().classes('w-full text-base gap-0 px-1 py-1').style('border-bottom: 1px solid #eee'):
-                    ui.label(stat['drone']).style('flex: 2; min-width: 80px; overflow: hidden; text-overflow: ellipsis')
-                    ui.label(str(stat['iteration'])).style('flex: 1; text-align: center; min-width: 40px')
-                    ui.label(self._format_time(stat['est_travel'])).style('flex: 1.5; text-align: center; min-width: 60px; color: #666')
+                    ui.label(stat['drone']).style('flex: 2; min-width: 60px; overflow: hidden; text-overflow: ellipsis')
+                    ui.label(str(stat['iteration'])).style('flex: 0.8; text-align: center; min-width: 30px')
+                    ui.label(self._format_time(stat['est_travel'])).style('flex: 1.2; text-align: center; min-width: 50px; color: #666')
                     
                     # Actual travel - color based on comparison with estimate
                     travel_text = self._format_time(stat['actual_travel'])
@@ -1907,12 +2194,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                             travel_color = '#1565c0'  # blue
                     else:
                         travel_color = '#999'
-                    ui.label(travel_text).style(f'flex: 1.5; text-align: center; min-width: 60px; color: {travel_color}; font-weight: bold')
+                    ui.label(travel_text).style(f'flex: 1.2; text-align: center; min-width: 50px; color: {travel_color}; font-weight: bold')
                     
                     # RTH time
                     rth_text = self._format_time(stat['actual_rth'])
                     rth_color = '#1565c0' if stat['actual_rth'] > 0 else '#999'
-                    ui.label(rth_text).style(f'flex: 1.5; text-align: center; min-width: 60px; color: {rth_color}; font-weight: bold')
+                    ui.label(rth_text).style(f'flex: 1.2; text-align: center; min-width: 50px; color: {rth_color}; font-weight: bold')
         
         # Scroll to bottom
         if self.mission_stats_scroll:

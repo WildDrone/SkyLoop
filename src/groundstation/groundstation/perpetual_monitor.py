@@ -135,6 +135,9 @@ class DroneRTHPredictor:
         self.battery_level = deque(maxlen=self.MAX_POINTS)
         self.batt_needed_rth = deque(maxlen=self.MAX_POINTS)
         
+        # Track max battery needed to go home (for conservative prediction)
+        self.max_batt_needed_rth = 0.0
+        
         # State
         self.is_active = False  # Only predict when drone is in MONITORING state
         self.start_time = None
@@ -144,6 +147,7 @@ class DroneRTHPredictor:
         self.timestamps.clear()
         self.battery_level.clear()
         self.batt_needed_rth.clear()
+        self.max_batt_needed_rth = 0.0
         self.start_time = None
         self.is_active = False
     
@@ -176,6 +180,10 @@ class DroneRTHPredictor:
         self.timestamps.append(elapsed)
         self.battery_level.append(battery)
         self.batt_needed_rth.append(batt_needed_to_go_home)
+        
+        # Track maximum battery needed to go home (conservative approach)
+        if batt_needed_to_go_home > self.max_batt_needed_rth:
+            self.max_batt_needed_rth = batt_needed_to_go_home
     
     def predict_rth_time(self) -> float:
         """
@@ -185,8 +193,9 @@ class DroneRTHPredictor:
             Predicted seconds until RTH, or float('inf') if cannot predict.
         """
         import numpy as np
+        import time
         
-        if not self.is_active or len(self.battery_level) < 2:
+        if not self.is_active or len(self.battery_level) < 2 or self.start_time is None:
             return float('inf')
         
         # Get all data for regression
@@ -203,12 +212,12 @@ class DroneRTHPredictor:
         if slope >= 0:
             return float('inf')  # Battery not draining
         
-        # Current RTH threshold
-        current_batt_needed = self.batt_needed_rth[-1]
-        rth_threshold = current_batt_needed + self.RTH_TRIGGER_MARGIN
+        # Use MAX battery needed to go home for conservative prediction
+        # This ensures we don't underestimate when RTH will trigger
+        rth_threshold = self.max_batt_needed_rth + self.RTH_TRIGGER_MARGIN
         
-        # Current time
-        current_time = times[-1]
+        # Current time (use actual current time relative to start, not last stored timestamp)
+        current_time = time.time() - self.start_time
         
         # Find when battery line crosses threshold
         # battery(t) = slope * t + intercept = rth_threshold
@@ -235,6 +244,107 @@ class DroneRTHPredictor:
             return -slope  # Negative slope = positive drain rate
         except:
             return 0.0
+    
+    def get_debug_info(self) -> dict:
+        """
+        Get detailed debug information about the prediction.
+        
+        Returns:
+            Dict with all computation details for debugging.
+        """
+        import numpy as np
+        import time
+        
+        info = {
+            'is_active': self.is_active,
+            'data_points': len(self.battery_level),
+            'current_battery': self.battery_level[-1] if self.battery_level else 0.0,
+            'batt_needed_to_go_home': self.batt_needed_rth[-1] if self.batt_needed_rth else 0.0,
+            'max_batt_needed_to_go_home': self.max_batt_needed_rth,
+            'rth_threshold': 0.0,
+            'slope': 0.0,
+            'intercept': 0.0,
+            'drain_rate_per_min': 0.0,
+            'elapsed_since_monitoring': 0.0,
+            't_rth_absolute': 0.0,
+            'predicted_rth_seconds': float('inf'),
+            'dji_remaining_flight_time': 0.0,  # Will be filled by caller
+        }
+        
+        if not self.is_active or len(self.battery_level) < 2 or self.start_time is None:
+            return info
+        
+        # Get all data for regression
+        times = np.array(list(self.timestamps))
+        batteries = np.array(list(self.battery_level))
+        
+        try:
+            slope, intercept = np.polyfit(times, batteries, 1)
+        except:
+            return info
+        
+        info['slope'] = slope
+        info['intercept'] = intercept
+        info['drain_rate_per_min'] = -slope * 60  # %/min
+        
+        # Use MAX battery needed to go home for conservative prediction
+        rth_threshold = self.max_batt_needed_rth + self.RTH_TRIGGER_MARGIN
+        info['rth_threshold'] = rth_threshold
+        
+        # Current time relative to start
+        current_time = time.time() - self.start_time
+        info['elapsed_since_monitoring'] = current_time
+        
+        if slope >= 0:
+            return info  # Battery not draining
+        
+        # When does line cross threshold?
+        t_rth = (rth_threshold - intercept) / slope
+        info['t_rth_absolute'] = t_rth
+        
+        # Time until RTH
+        time_until_rth = max(0.0, t_rth - current_time)
+        info['predicted_rth_seconds'] = time_until_rth
+        
+        # Add chart data for visualization (convert to minutes for readability)
+        # Battery scatter points: [[time_min, battery], ...]
+        chart_battery_points = [[t / 60, b] for t, b in zip(times, batteries)]
+        info['chart_battery_points'] = chart_battery_points
+        
+        # Regression line: from t=0 to t=t_rth (or current + 5min if t_rth is too far)
+        t_end = min(t_rth, current_time + 300) if t_rth > 0 else current_time + 300  # Max 5min projection
+        t_start = 0
+        regression_line = [
+            [t_start / 60, slope * t_start + intercept],
+            [t_end / 60, slope * t_end + intercept]
+        ]
+        info['chart_regression_line'] = regression_line
+        
+        # RTH threshold line (horizontal) - using MAX threshold
+        threshold_line = [
+            [0, rth_threshold],
+            [t_end / 60, rth_threshold]
+        ]
+        info['chart_threshold_line'] = threshold_line
+        
+        # RTH crossing point (where regression meets threshold)
+        if t_rth > 0:
+            info['chart_rth_point'] = [[t_rth / 60, rth_threshold]]
+        else:
+            info['chart_rth_point'] = []
+        
+        # Current time vertical marker (from battery level to 0)
+        current_battery = batteries[-1]
+        current_time_min = current_time / 60
+        info['chart_current_time_line'] = [
+            [current_time_min, 0],
+            [current_time_min, 100]
+        ]
+        
+        # Current position marker (where we are now on the chart)
+        info['chart_current_point'] = [[current_time_min, current_battery]]
+        
+        return info
 
 
 @dataclass
@@ -476,13 +586,12 @@ class PerpetualMonitorNode(Node):
         Get remaining flight time for a drone.
         
         Uses RTH predictor when drone is in MONITORING state for accurate relay timing.
-        Falls back to DJI's remaining_flight_time otherwise.
         
         Args:
             namespace: The drone's ROS namespace
             
         Returns:
-            Remaining flight time in seconds
+            Remaining flight time in seconds from RTH predictor, or 0.0 if unavailable
         """
         if namespace not in self.drones:
             return 0.0
@@ -494,12 +603,12 @@ class PerpetualMonitorNode(Node):
             predictor = self.rth_predictors[namespace]
             predicted_time = predictor.predict_rth_time()
             
-            # Use prediction if valid (not infinity and reasonable)
+            # Return prediction if valid (not infinity and reasonable)
             if predicted_time != float('inf') and predicted_time > 0:
                 return predicted_time
         
-        # Fallback to DJI's remaining_flight_time
-        return drone.remaining_flight_time
+        # Return 0 if no valid prediction available
+        return 0.0
     
     def _on_mission_status_update(self, namespace: str, state: MissionState, message: str):
         """Handle mission status updates from controller."""
@@ -522,7 +631,7 @@ class PerpetualMonitorNode(Node):
                 if self.ui_handler:
                     self.ui_handler.update_drone_state(namespace, state_map[state])
     
-    def _on_relay_countdown_update(self, countdown: float, next_drone: str):
+    def _on_relay_countdown_update(self, countdown: float, next_drone: str, timing_breakdown: dict = None):
         """Handle relay countdown updates."""
         self.mission.relay_countdown = countdown
         self.mission.next_drone = next_drone

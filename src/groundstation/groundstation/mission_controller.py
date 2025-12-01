@@ -141,6 +141,11 @@ class MissionController:
         self.drone_order: List[str] = []  # Order for relay
         self.current_drone_index: int = 0
         
+        # Relay launch tracking - prevents missed launches if countdown fluctuates
+        self._relay_launch_pending: bool = False
+        self._pending_next_drone: str = ""
+        self._pending_next_index: int = 0
+        
         # Navigation mode: False = PID (5 m/s), True = DJI Native (10 m/s)
         self.use_dji_native: bool = False
         
@@ -174,7 +179,7 @@ class MissionController:
         
         # Status callback (for GUI updates)
         self.on_status_update: Optional[Callable[[str, MissionState, str], None]] = None
-        self.on_relay_countdown: Optional[Callable[[float, str], None]] = None
+        self.on_relay_countdown: Optional[Callable[[float, str, dict], None]] = None  # countdown, next_drone, timing_breakdown
         self.on_mission_event: Optional[Callable[[str, str], None]] = None
         
         # Travel time history for estimation
@@ -226,7 +231,13 @@ class MissionController:
     def estimate_travel_time(self, distance: float, altitude: float = None, 
                              horizontal_speed: float = None, vertical_speed: float = None) -> float:
         """
-        Estimate travel time in seconds, including climb time.
+        Estimate travel time in seconds, including climb time and wait times.
+        
+        This estimation matches the actual flight sequence:
+        1. Wait 5s after takeoff before climbing
+        2. Climb to altitude
+        3. Wait 5s after reaching altitude before transit
+        4. Horizontal transit to monitoring point
         
         Args:
             distance: Horizontal distance in meters
@@ -238,6 +249,10 @@ class MissionController:
         Returns:
             Estimated travel time in seconds
         """
+        # Wait times matching actual implementation
+        WAIT_AFTER_TAKEOFF = 5.0  # time.sleep(5.0) in TAKING_OFF state
+        WAIT_AFTER_CLIMB = 5.0    # time.sleep(5.0) in CLIMBING_TO_ALTITUDE state
+        
         # Use defaults if not specified
         if vertical_speed is None:
             vertical_speed = self.VERTICAL_SPEED
@@ -265,9 +280,9 @@ class MissionController:
         # Time for horizontal translation
         horizontal_time = distance / horizontal_speed
         
-        # Total travel time = climb + horizontal (sequential, not parallel)
-        # Note: DJI drones typically climb first, then translate
-        return climb_time + horizontal_time
+        # Total travel time = waits + climb + horizontal (sequential)
+        # Matches actual flight sequence for accurate first-rotation estimation
+        return WAIT_AFTER_TAKEOFF + climb_time + WAIT_AFTER_CLIMB + horizontal_time
     
     def get_average_travel_time(self) -> float:
         """Get average travel time from history."""
@@ -545,30 +560,43 @@ class MissionController:
             return
         
         elif mission.state == MissionState.SETTING_RTH_ALTITUDE:
+            # Set RTH altitude before takeoff
             if self.cmd_set_rth_altitude:
+                self._emit_event(namespace, f"Setting RTH altitude to {mission.assigned_altitude}m")
                 self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+            else:
+                self._emit_event(namespace, "WARNING: cmd_set_rth_altitude not available!")
             
-            # Brief wait then takeoff
-            time.sleep(0.5)
+            self._update_status(namespace, mission.state, f"Setting RTH altitude to {mission.assigned_altitude}m")
+            
+            # Brief wait for command to be processed, then takeoff
+            time.sleep(1.0)
             mission.state = MissionState.TAKING_OFF
-            self._update_status(namespace, mission.state, "Setting RTH altitude...")
         
         elif mission.state == MissionState.TAKING_OFF:
+            self._update_status(namespace, mission.state, "Taking off...")
+            
             if self.cmd_takeoff:
                 # Send takeoff command twice for reliability
                 self.cmd_takeoff(namespace)
                 time.sleep(2.0)
                 self.cmd_takeoff(namespace)
             
-            # Wait 5 seconds before transitioning to climbing
+            # Wait 5 seconds for drone to stabilize after takeoff
             time.sleep(5.0)
-            mission.state = MissionState.CLIMBING_TO_ALTITUDE
-            self._update_status(namespace, mission.state, "Taking off...")
             
-            # Send goto_altitude command to climb to target altitude
+            # Start travel time measurement from beginning of climb
+            # (includes climb + transit for accurate relay timing estimation)
+            mission.transit_start_time = time.time()
+            
+            # Transition to climbing and send altitude command
+            mission.state = MissionState.CLIMBING_TO_ALTITUDE
+            
             if self.cmd_goto_altitude:
                 self.cmd_goto_altitude(namespace, mission.assigned_altitude)
                 self._emit_event(namespace, f"Climbing to {mission.assigned_altitude}m")
+            
+            self._update_status(namespace, mission.state, f"Climbing to {mission.assigned_altitude}m")
         
         elif mission.state == MissionState.CLIMBING_TO_ALTITUDE:
             # Check if altitude reached - prefer using the altitude_reached flag from drone
@@ -595,7 +623,7 @@ class MissionController:
                 time.sleep(5.0)
                 # Altitude reached, start transit
                 mission.state = MissionState.TRANSIT_TO_MONITORING
-                mission.transit_start_time = time.time()
+                # Note: transit_start_time was set at beginning of climb for accurate total travel time
                 self._start_transit(namespace, mission)
                 self._update_status(namespace, mission.state, "Climbing to altitude...")
         
@@ -871,19 +899,35 @@ class MissionController:
             avg_travel = current_mission.estimated_travel_time
         
         countdown = remaining - avg_travel - self.config.safety_buffer_seconds
-        
+
         # Notify UI of countdown
         next_index = (self.current_drone_index + 1) % len(self.drone_order)
         next_ns = self.drone_order[next_index]
-        
+
+        # Build timing breakdown for UI display
+        timing_breakdown = {
+            'remaining_flight_time': remaining,
+            'avg_travel_time': avg_travel,
+            'safety_buffer': self.config.safety_buffer_seconds,
+            'countdown': countdown
+        }
+
         if self.on_relay_countdown:
-            self.on_relay_countdown(countdown, next_ns)
-        
-        # Launch next drone if countdown <= 0
+            self.on_relay_countdown(countdown, next_ns, timing_breakdown)        # Mark launch as pending when countdown <= 0
+        # This ensures we don't miss the launch if countdown fluctuates back to positive
         if countdown <= 0:
-            next_mission = self.drone_missions.get(next_ns)
-            if next_mission and next_mission.state == MissionState.IDLE:
-                self._launch_relay_drone(next_ns, next_index)
+            if not self._relay_launch_pending:
+                self._relay_launch_pending = True
+                self._pending_next_drone = next_ns
+                self._pending_next_index = next_index
+                self._emit_event(next_ns, "Relay launch triggered - waiting for drone to be ready")
+        
+        # Try to launch if pending (either countdown <= 0 now, or was <= 0 before)
+        if self._relay_launch_pending:
+            pending_mission = self.drone_missions.get(self._pending_next_drone)
+            if pending_mission and pending_mission.state == MissionState.IDLE:
+                self._launch_relay_drone(self._pending_next_drone, self._pending_next_index)
+                self._relay_launch_pending = False  # Reset after successful launch
     
     def _launch_relay_drone(self, namespace: str, index: int):
         """Launch the next drone in the relay sequence."""
@@ -898,8 +942,11 @@ class MissionController:
                 mission.state = MissionState.ERROR
             return
         
-        # Calculate altitude (15m above previous)
-        mission.assigned_altitude = self.config.base_rth_altitude + (index * self.config.altitude_separation)
+        # Calculate altitude based on drone's fixed position in the order
+        # Each drone keeps the same altitude across all rotations:
+        # drone_0: base_altitude, drone_1: base + 15m, drone_2: base + 30m, etc.
+        drone_position = self.drone_order.index(namespace)
+        mission.assigned_altitude = self.config.base_rth_altitude + (drone_position * self.config.altitude_separation)
         
         # Start mission
         mission.state = MissionState.SETTING_RTH_ALTITUDE
