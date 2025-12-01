@@ -730,9 +730,6 @@ class MissionController:
                     
                     # Clear the replacing_drone field
                     mission.replacing_drone = ""
-                    
-                    # Clear the replacing_drone field
-                    mission.replacing_drone = ""
         
         elif mission.state == MissionState.MONITORING:
             # Drone is monitoring - relay logic handles transition
@@ -1103,7 +1100,6 @@ class MissionController:
             mission = self.drone_missions.get(ns)
             if mission and mission.state == MissionState.COMPLETED:
                 needs_reconnect.append(ns)
-        return needs_reconnect
         return needs_reconnect
     
     def is_mission_active(self) -> bool:
