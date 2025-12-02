@@ -164,6 +164,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.mission_status_label = None
         self.countdown_label = None
         self.countdown_progress = None
+        self.countdown_container = None  # Container for countdown (hidden during manual swap)
+        self.force_swap_button = None  # Button to trigger manual swap
         self.active_drone_label = None
         self.next_drone_label = None
         self.drones_needed_label = None
@@ -174,6 +176,21 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.mission_timer_label = None
         self._mission_start_time = None
         self._mission_timer_task = None
+        self._manual_swap_active = False  # True when manual swap in progress
+        
+        # ROS bag recording
+        self._rosbag_process = None  # subprocess.Popen for ros2 bag record
+        self._rosbag_recording = False
+        self._rosbag_dir = "/WildPerpetua/src/rosbags"  # Mounted to host's src/rosbags/
+        
+        # Debug console (ROS logs)
+        self.debug_mode = False
+        self.debug_toggle = None
+        self.debug_console = None
+        self.debug_console_container = None
+        self.debug_scroll = None
+        self.normal_logs_container = None
+        self.mission_stats_card = None  # Card to hide when debug console is shown
         
         # Event log
         self.event_log = None
@@ -193,14 +210,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Battery swap detection (track last battery level per drone)
         self.drone_last_battery: Dict[str, float] = {}
-        
-        # Debug mode
-        self.debug_mode = False
-        self.debug_console = None
-        self.debug_console_container = None
-        self.debug_log_queue: list = []
-        self.debug_toggle = None
-        self.normal_logs_container = None
         
         # State machine display elements
         self.state_machine_container = None
@@ -862,6 +871,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             next_drone = data['next_drone']
             timing_breakdown = data.get('timing_breakdown', {})
             
+            # Check if manual swap just completed - restore UI
+            if self._manual_swap_active and self.mission_controller and not self.mission_controller.is_manual_swap_active():
+                self._manual_swap_active = False
+                # Restore countdown display
+                if self.countdown_container:
+                    self.countdown_container.style('display: flex; background: #fff3e0;')
+                # Restore force swap button
+                if self.force_swap_button:
+                    self.force_swap_button.props(remove='disabled')
+                    self.force_swap_button.text = 'Force Swap'
+                self._emit_log("[SWAP] Swap completed - returning to automatic countdown mode")
+            
+            # Don't update countdown display if manual swap is in progress
+            if self._manual_swap_active:
+                return
+            
             # Update timing breakdown display
             if timing_breakdown and hasattr(self, 'timing_breakdown_container'):
                 self.timing_breakdown_container.style('display: flex;')
@@ -953,7 +978,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Scroll to bottom
         if self.event_scroll:
             self.event_scroll.scroll_to(percent=1.0)
-    
+
     def _build_state_machine_display(self):
         """Build the state machine visualization."""
         if not self.state_machine_container:
@@ -1107,7 +1132,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             with ui.row().classes('items-center gap-3 w-full'):
                 ui.image('/static/logo.png').classes('w-16 h-16')
                 ui.label("WildPerpetua").classes('text-2xl font-bold').style('flex-grow: 1')
-                self.debug_toggle = ui.button(icon='bug_report', on_click=self._toggle_debug_mode).props('flat dense').tooltip('Toggle Debug Mode')
+                self.debug_toggle = ui.button(icon='bug_report', on_click=self._toggle_debug_mode).props('flat dense').tooltip('Toggle ROS Console')
                 ui.button(icon='restart_alt', on_click=self._restart_groundstation).props('flat dense color=negative').tooltip('Restart Groundstation')
             
             ui.separator()
@@ -1151,10 +1176,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         ui.icon('timer').classes('text-xl text-gray-600')
                         self.mission_timer_label = ui.label("00:00:00").classes('text-xl font-bold font-mono').style('color: #1976d2;')
                     
-                    # Relay countdown
-                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #fff3e0;'):
+                    # Relay countdown (hidden during manual swap)
+                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #fff3e0;') as self.countdown_container:
                         ui.icon('schedule').classes('text-xl').style('color: #e65100;')
                         self.countdown_label = ui.label("--:--").classes('text-xl font-bold font-mono').style('color: #e65100;')
+                    
+                    # Force Swap button (always visible, next to countdown)
+                    self.force_swap_button = ui.button('Force Swap', icon='swap_horiz', on_click=self._force_swap_clicked).props('color=warning no-caps dense size=sm').classes('ml-2').tooltip('Manually trigger relay swap')
                 
                 # Progress bar for countdown
                 self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=orange').classes('mt-1')
@@ -1246,8 +1274,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Column 3: Mission Control
                 with ui.card().classes('p-3').style('flex: 1; background: linear-gradient(135deg, #e3f2fd 0%, #ffffff 100%); border-left: 3px solid #1976d2;'):
                     with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #bbdefb;'):
-                        ui.icon('flag').classes('text-lg').style('color: #1976d2;')
+                        ui.icon('flag').classes('text-sm').style('color: #1976d2;')
                         ui.label("Mission Control").classes('text-sm font-bold')
+                        ui.space()
+                        # ROS bag recording toggle
+                        self.rosbag_switch = ui.switch('🤖 Record ROS Bag', value=False, on_change=self._on_rosbag_change).props('dense size=sm').tooltip('Record all ROS topics to bag file')
                     with ui.grid(columns=2).classes('w-full gap-1 mt-2'):
                         self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').classes('w-full')
                         self.safety_buffer_input = ui.input(label='Buffer (s)', value='60').props('dense outlined').classes('w-full')
@@ -1279,8 +1310,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         with ui.scroll_area().classes('w-full').style('height: 100px;').props('id=event-log') as self.event_scroll:
                             self.event_log = ui.column().classes('w-full gap-0')
                     
-                    # Mission Statistics
-                    with ui.card().classes('p-2').style('flex: 1;'):
+                    # Mission Statistics (hidden when debug console is shown)
+                    with ui.card().classes('p-2').style('flex: 1;') as self.mission_stats_card:
                         with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #e0e0e0;'):
                             ui.icon('analytics').classes('text-lg text-primary')
                             ui.label("Mission Statistics").classes('text-sm font-bold')
@@ -1297,6 +1328,17 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         
                         with ui.scroll_area().classes('w-full').style('height: 80px;') as self.mission_stats_scroll:
                             self.mission_stats_container = ui.column().classes('w-full gap-0')
+                    
+                    # ROS Console (hidden by default, shown in place of Mission Stats)
+                    with ui.card().classes('p-2').style('flex: 1; display: none;') as self.debug_console_container:
+                        with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #ffcc80;'):
+                            ui.icon('terminal').classes('text-lg').style('color: #e65100;')
+                            ui.label("ROS Console").classes('text-sm font-bold').style('color: #e65100;')
+                            ui.space()
+                            ui.button(icon='delete', on_click=self._clear_debug_console).props('flat dense size=sm').tooltip('Clear console')
+                        
+                        with ui.scroll_area().classes('w-full').style('height: 100px; background: #1e1e1e; border-radius: 4px;') as self.debug_scroll:
+                            self.debug_console = ui.column().classes('w-full gap-0 p-2')
                 
                 # RTH Prediction Debug Panel (expansion)
                 with ui.expansion("RTH Prediction Debug", icon='bug_report').classes('w-full').style('background: #fff8e1;') as self.rth_debug_expansion:
@@ -1435,17 +1477,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                                 'formatter': '{a}: {c}'
                             }
                         }).classes('w-full').style('height: 200px;')
-            
-            # Debug Console (hidden by default, replaces above when enabled)
-            with ui.card().classes('w-full').style('display: none;') as self.debug_console_container:
-                with ui.row().classes('items-center gap-2 w-full'):
-                    ui.icon('terminal').classes('text-xl text-orange-600')
-                    ui.label("Debug Console").classes('text-lg font-bold text-orange-600')
-                    ui.space()
-                    ui.button(icon='delete', on_click=self._clear_debug_console).props('flat dense').tooltip('Clear console')
-                
-                with ui.scroll_area().classes('w-full').style('height: 180px; background: #1e1e1e; border-radius: 4px;') as self.debug_scroll:
-                    self.debug_console = ui.column().classes('w-full gap-0 p-2')
 
     def _build_drone_card(self, namespace: str, drone: DroneData):
         """Build a compact card for a single drone."""
@@ -1524,6 +1555,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 ui.button(icon='videocam', on_click=lambda ns=namespace: self.send_start_recording(ns)).props('flat color=red').tooltip('Start Recording')
                 ui.button(icon='stop', on_click=lambda ns=namespace: self.send_stop_recording(ns)).props('flat').tooltip('Stop Recording')
                 ui.button(icon='my_location', on_click=lambda ns=namespace: self.set_monitoring_point_from_drone(ns)).props('flat').tooltip('Use as monitoring point')
+                self.drone_buttons[namespace]['ready'] = ui.button(icon='check_circle', on_click=lambda ns=namespace: self._mark_drone_ready(ns)).props('flat color=green').tooltip('Mark as Ready (battery swapped)')
                 ui.button(icon='link_off', on_click=lambda ns=namespace: self._disconnect_drone_ui(ns)).props('flat color=negative').tooltip('Disconnect')
             
             # Create arrow on map
@@ -1590,6 +1622,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._refresh_drone_list()
         else:
             ui.notify(f'Cannot disconnect {namespace} (may be in flight)', type='warning')
+    
+    def _mark_drone_ready(self, namespace: str):
+        """Mark a drone as ready (IDLE) for next relay cycle."""
+        if not self.mission_controller:
+            ui.notify('No mission controller active', type='warning')
+            return
+        
+        if self.mission_controller.mark_drone_ready(namespace):
+            ui.notify(f'{namespace} marked as ready', type='positive')
+            # Emit state update to refresh GUI
+            self.drone_state_update.emit({
+                'namespace': namespace,
+                'state': DroneState.IDLE
+            })
+        else:
+            ui.notify(f'{namespace} cannot be marked ready (not in COMPLETED state)', type='warning')
     
     def _refresh_drone_list(self):
         """Refresh the drone list display."""
@@ -1836,6 +1884,35 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         else:
             ui.notify('Failed to start relay mission', type='negative')
     
+    def _force_swap_clicked(self):
+        """Handle Force Swap button click - manually trigger relay swap."""
+        if not self.mission_controller:
+            ui.notify('Mission controller not available', type='warning')
+            return
+        
+        # Check if a swap is already in progress
+        if self.mission_controller.is_manual_swap_active():
+            ui.notify('Swap already in progress', type='warning')
+            return
+        
+        # Try to force the swap
+        success, message = self.mission_controller.force_relay_swap()
+        
+        if success:
+            self._manual_swap_active = True
+            ui.notify(message, type='positive')
+            self._emit_log(f"[SWAP] {message}")
+            
+            # Hide countdown, show "SWAPPING" status
+            if self.countdown_container:
+                self.countdown_container.style('display: none;')
+            if self.force_swap_button:
+                self.force_swap_button.props('disabled')
+                self.force_swap_button.text = 'Swapping...'
+        else:
+            ui.notify(message, type='warning')
+            self._emit_log(f"[SWAP] Failed: {message}")
+    
     def _start_mission_timer(self):
         """Start the mission elapsed time timer."""
         if self._mission_timer_task is None:
@@ -1868,6 +1945,57 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.active_drone_label.style('background: #e0e0e0; color: #424242;')
         ui.notify('Mission stopped', type='info')
         self._emit_log("Mission stopped - drones returning home")
+    
+    def _on_rosbag_change(self, e):
+        """Handle ROS bag recording toggle change."""
+        import subprocess
+        import os
+        from datetime import datetime
+        
+        enabled = e.value
+        
+        if enabled:
+            # Start recording
+            try:
+                # Create rosbags directory if it doesn't exist
+                os.makedirs(self._rosbag_dir, exist_ok=True)
+                
+                # Generate bag name with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                bag_name = f"wildperpetua_{timestamp}"
+                bag_path = os.path.join(self._rosbag_dir, bag_name)
+                
+                # Start ros2 bag record in background
+                self._rosbag_process = subprocess.Popen(
+                    ['ros2', 'bag', 'record', '-a', '-o', bag_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                self._rosbag_recording = True
+                
+                ui.notify(f'🎥 Recording started: {bag_name}', type='positive', timeout=5000)
+                self._emit_log(f"[ROSBAG] Recording started - saving to src/rosbags/{bag_name}")
+                
+            except Exception as ex:
+                ui.notify(f'Failed to start recording: {ex}', type='negative')
+                self._emit_log(f"[ROSBAG] Error: {ex}")
+                self.rosbag_switch.value = False
+                self._rosbag_recording = False
+        else:
+            # Stop recording
+            if self._rosbag_process:
+                try:
+                    self._rosbag_process.terminate()
+                    self._rosbag_process.wait(timeout=5)
+                    self._rosbag_process = None
+                    self._rosbag_recording = False
+                    
+                    ui.notify('🎥 Recording stopped', type='info')
+                    self._emit_log("[ROSBAG] Recording stopped")
+                    
+                except Exception as ex:
+                    ui.notify(f'Error stopping recording: {ex}', type='warning')
+                    self._emit_log(f"[ROSBAG] Error stopping: {ex}")
     
     def _on_trajectory_mode_change(self, e):
         """Handle trajectory mode toggle change."""
@@ -2027,31 +2155,31 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         ui.notify('Mission statistics cleared', type='info')
     
     def _toggle_debug_mode(self):
-        """Toggle debug mode on/off."""
+        """Toggle ROS console on/off."""
         self.debug_mode = not self.debug_mode
         
         if self.debug_mode:
-            # Hide normal logs, show debug console
-            if self.normal_logs_container:
-                self.normal_logs_container.style('display: none;')
+            # Hide Mission Statistics, show ROS console
+            if self.mission_stats_card:
+                self.mission_stats_card.style('display: none;')
             if self.debug_console_container:
-                self.debug_console_container.style('display: block;')
+                self.debug_console_container.style('display: block; flex: 1;')
             if self.debug_toggle:
                 self.debug_toggle.props('color=orange')
-            ui.notify('Debug mode enabled', type='warning')
+            ui.notify('ROS Console enabled', type='warning')
             
             # Set up logging handler to capture output
             self._setup_debug_logging()
-            self._add_debug_log('Debug mode enabled - capturing all logs', 'INFO')
+            self._add_debug_log('ROS Console enabled - capturing logs', 'INFO')
         else:
-            # Show normal logs, hide debug console
-            if self.normal_logs_container:
-                self.normal_logs_container.style('display: block;')
+            # Show Mission Statistics, hide ROS console
+            if self.mission_stats_card:
+                self.mission_stats_card.style('display: block; flex: 1;')
             if self.debug_console_container:
                 self.debug_console_container.style('display: none;')
             if self.debug_toggle:
                 self.debug_toggle.props('color=')
-            ui.notify('Debug mode disabled', type='info')
+            ui.notify('ROS Console disabled', type='info')
             
             # Remove logging handler
             self._remove_debug_logging()
@@ -2204,7 +2332,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Clear the debug console."""
         if self.debug_console:
             self.debug_console.clear()
-        ui.notify('Debug console cleared', type='info')
+        ui.notify('Console cleared', type='info')
 
     def _format_time(self, seconds: float) -> str:
         """Format seconds as MM:SS."""

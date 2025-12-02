@@ -413,6 +413,7 @@ class DJIInterface:
 
     def requestSendGotoYaw(self, yaw):
         """Rotate to a specific yaw angle."""
+        self.requestSendEnableVirtualStick()
         return self.requestSend(EP_GOTO_YAW, f"{yaw}")
 
     def requestSendGotoAltitude(self, altitude):

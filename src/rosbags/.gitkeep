@@ -1,0 +1,2 @@
+# This directory stores ROS bag recordings
+# Bag files are ignored by git (see .gitignore)

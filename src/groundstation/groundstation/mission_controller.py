@@ -10,6 +10,9 @@ Project: WildDrone
 import time
 import math
 import threading
+import csv
+import os
+from datetime import datetime
 from enum import Enum, auto
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable, Tuple
@@ -87,6 +90,12 @@ class DroneMissionStatus:
     # Relay handoff - drone namespace to replace when this drone arrives at monitoring point
     replacing_drone: str = ""
     
+    # Relay handoff target - snapshot of the drone being replaced at launch time
+    # Used to fly to where the old drone was instead of the monitoring point
+    relay_target_lat: float = 0.0
+    relay_target_lon: float = 0.0
+    relay_target_heading: float = 0.0
+    
     # Camera sync tracking (360° yaw for video synchronization)
     camera_sync_start_time: float = 0.0
     camera_sync_yaw_started: bool = False
@@ -95,6 +104,8 @@ class DroneMissionStatus:
     camera_sync_initial_heading: float = 0.0
     camera_sync_next_state: str = "RTH"  # "RTH" or "MONITORING" - what to do after spin
     camera_sync_partner_drone: str = ""  # The OTHER drone that should RTH after spin completes
+    camera_sync_top_drone_ns: str = ""  # The TOP (higher) drone namespace during sync
+    camera_sync_top_drone_previous_gimbal: float = 0.0  # Previous gimbal pitch to restore after sync
     
     # Non-blocking state machine timers (timestamps)
     state_entry_time: float = 0.0  # When current state was entered
@@ -160,6 +171,18 @@ class MissionController:
         self.config = RelayMissionConfig()
         self.relay_state = RelayState.INACTIVE
         
+        # Command and event logging
+        self._command_log: List[str] = []  # Log of all commands sent
+        self._event_log: List[Tuple[str, str, str, str]] = []  # (timestamp, namespace, state, message)
+        
+        # CSV logging configuration
+        self._csv_log_dir: str = os.path.expanduser("~/wildperpetua_logs")
+        self._csv_session_id: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._csv_commands_file: Optional[str] = None
+        self._csv_events_file: Optional[str] = None
+        self._csv_positions_file: Optional[str] = None
+        self._csv_logging_enabled: bool = False
+        
         # Drone tracking
         self.drone_missions: Dict[str, DroneMissionStatus] = {}
         self.drone_order: List[str] = []  # Order for relay
@@ -170,22 +193,25 @@ class MissionController:
         self._pending_next_drone: str = ""
         self._pending_next_index: int = 0
         
+        # Manual swap mode - bypasses countdown timer
+        self._manual_swap_active: bool = False
+        
         # Navigation mode: False = PID (5 m/s), True = DJI Native (10 m/s)
         self.use_dji_native: bool = False
         
         # Callbacks for drone commands (set by ROS node)
-        self.cmd_takeoff: Optional[Callable[[str], None]] = None
-        self.cmd_land: Optional[Callable[[str], None]] = None
-        self.cmd_rth: Optional[Callable[[str], None]] = None
-        self.cmd_goto_waypoint: Optional[Callable[[str, float, float, float, float], None]] = None
-        self.cmd_goto_waypoint_dji_native: Optional[Callable[[str, float, float, float], None]] = None  # DJI Native mode
-        self.cmd_goto_altitude: Optional[Callable[[str, float], None]] = None
-        self.cmd_set_rth_altitude: Optional[Callable[[str, float], None]] = None
-        self.cmd_start_recording: Optional[Callable[[str], None]] = None
-        self.cmd_stop_recording: Optional[Callable[[str], None]] = None
-        self.cmd_set_gimbal_pitch: Optional[Callable[[str, float], None]] = None
-        self.cmd_goto_yaw: Optional[Callable[[str, float], None]] = None  # Set drone heading
-        self.cmd_abort: Optional[Callable[[str], None]] = None
+        self._cmd_takeoff: Optional[Callable[[str], None]] = None
+        self._cmd_land: Optional[Callable[[str], None]] = None
+        self._cmd_rth: Optional[Callable[[str], None]] = None
+        self._cmd_goto_waypoint: Optional[Callable[[str, float, float, float, float], None]] = None
+        self._cmd_goto_waypoint_dji_native: Optional[Callable[[str, float, float, float], None]] = None  # DJI Native mode
+        self._cmd_goto_altitude: Optional[Callable[[str, float], None]] = None
+        self._cmd_set_rth_altitude: Optional[Callable[[str, float], None]] = None
+        self._cmd_start_recording: Optional[Callable[[str], None]] = None
+        self._cmd_stop_recording: Optional[Callable[[str], None]] = None
+        self._cmd_set_gimbal_pitch: Optional[Callable[[str, float], None]] = None
+        self._cmd_goto_yaw: Optional[Callable[[str, float], None]] = None  # Set drone heading
+        self._cmd_abort: Optional[Callable[[str], None]] = None
         
         # Telemetry getters (set by ROS node)
         self.get_drone_position: Optional[Callable[[str], Tuple[float, float, float]]] = None
@@ -217,6 +243,333 @@ class MissionController:
         self._running = False
         self._update_interval = 0.5  # seconds
     
+    # ========================================================================
+    # DEBUG MODE - Command wrappers with logging
+    # ========================================================================
+    
+    def _log_command(self, cmd_name: str, namespace: str, *args):
+        """Log a command being sent to a drone."""
+        timestamp = time.strftime("%H:%M:%S")
+        args_str = ", ".join(str(a) for a in args) if args else ""
+        log_entry = f"[{timestamp}] {namespace} <- {cmd_name}({args_str})"
+        self._command_log.append(log_entry)
+        
+        # Keep log bounded
+        if len(self._command_log) > 500:
+            self._command_log = self._command_log[-500:]
+        
+        # Always log commands
+        logger.info(f"🔹 CMD: {log_entry}")
+        self._emit_event(namespace, f"CMD: {cmd_name}({args_str})")
+        
+        # Write to CSV if enabled
+        if self._csv_logging_enabled and self._csv_commands_file:
+            self._write_csv_command(timestamp, namespace, cmd_name, args_str)
+    
+    def get_command_log(self) -> List[str]:
+        """Get the command log for display."""
+        return self._command_log.copy()
+    
+    def clear_command_log(self):
+        """Clear the command log."""
+        self._command_log.clear()
+    
+    # ========================================================================
+    # CSV LOGGING
+    # ========================================================================
+    
+    def enable_csv_logging(self, enabled: bool = True, log_dir: str = None):
+        """
+        Enable or disable CSV logging.
+        
+        Args:
+            enabled: Enable CSV logging
+            log_dir: Directory to save CSV files (default: ~/wildperpetua_logs)
+        """
+        if log_dir:
+            self._csv_log_dir = os.path.expanduser(log_dir)
+        
+        self._csv_logging_enabled = enabled
+        
+        if enabled:
+            # Create log directory
+            os.makedirs(self._csv_log_dir, exist_ok=True)
+            
+            # Generate session ID and file paths
+            self._csv_session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self._csv_commands_file = os.path.join(
+                self._csv_log_dir, f"commands_{self._csv_session_id}.csv"
+            )
+            self._csv_events_file = os.path.join(
+                self._csv_log_dir, f"events_{self._csv_session_id}.csv"
+            )
+            self._csv_positions_file = os.path.join(
+                self._csv_log_dir, f"positions_{self._csv_session_id}.csv"
+            )
+            
+            # Initialize CSV files with headers
+            self._init_csv_files()
+            
+            logger.info(f"📁 CSV logging enabled: {self._csv_log_dir}")
+            logger.info(f"   Commands: {self._csv_commands_file}")
+            logger.info(f"   Events: {self._csv_events_file}")
+            logger.info(f"   Positions: {self._csv_positions_file}")
+        else:
+            logger.info("📁 CSV logging disabled")
+    
+    def _init_csv_files(self):
+        """Initialize CSV files with headers."""
+        # Commands file
+        with open(self._csv_commands_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['timestamp', 'datetime', 'namespace', 'command', 'arguments'])
+        
+        # Events file
+        with open(self._csv_events_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['timestamp', 'datetime', 'namespace', 'state', 'message'])
+        
+        # Positions file
+        with open(self._csv_positions_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['timestamp', 'datetime', 'namespace', 'latitude', 'longitude', 'altitude', 'heading', 'battery', 'state'])
+    
+    def _write_csv_command(self, time_str: str, namespace: str, command: str, args: str):
+        """Write a command to the CSV file."""
+        try:
+            with open(self._csv_commands_file, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    time.time(),
+                    datetime.now().isoformat(),
+                    namespace,
+                    command,
+                    args
+                ])
+        except Exception as e:
+            logger.error(f"Failed to write command to CSV: {e}")
+    
+    def _write_csv_event(self, namespace: str, state: str, message: str):
+        """Write an event to the CSV file."""
+        if not self._csv_logging_enabled or not self._csv_events_file:
+            return
+        try:
+            with open(self._csv_events_file, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    time.time(),
+                    datetime.now().isoformat(),
+                    namespace,
+                    state,
+                    message
+                ])
+        except Exception as e:
+            logger.error(f"Failed to write event to CSV: {e}")
+    
+    def log_position_to_csv(self, namespace: str, lat: float, lon: float, alt: float, 
+                            heading: float = 0.0, battery: float = 0.0):
+        """Log a position update to the CSV file."""
+        if not self._csv_logging_enabled or not self._csv_positions_file:
+            return
+        try:
+            state = ""
+            if namespace in self.drone_missions:
+                state = self.drone_missions[namespace].state.name
+            
+            with open(self._csv_positions_file, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    time.time(),
+                    datetime.now().isoformat(),
+                    namespace,
+                    f"{lat:.8f}",
+                    f"{lon:.8f}",
+                    f"{alt:.2f}",
+                    f"{heading:.1f}",
+                    f"{battery:.1f}",
+                    state
+                ])
+        except Exception as e:
+            logger.error(f"Failed to write position to CSV: {e}")
+    
+    def get_csv_log_files(self) -> Dict[str, str]:
+        """Get paths to current CSV log files."""
+        return {
+            'commands': self._csv_commands_file,
+            'events': self._csv_events_file,
+            'positions': self._csv_positions_file,
+            'directory': self._csv_log_dir
+        }
+    
+    # Command property wrappers that add logging
+    @property
+    def cmd_takeoff(self):
+        return self._cmd_takeoff
+    
+    @cmd_takeoff.setter
+    def cmd_takeoff(self, func):
+        if func is None:
+            self._cmd_takeoff = None
+        else:
+            def wrapper(ns):
+                self._log_command("takeoff", ns)
+                return func(ns)
+            self._cmd_takeoff = wrapper
+    
+    @property
+    def cmd_land(self):
+        return self._cmd_land
+    
+    @cmd_land.setter
+    def cmd_land(self, func):
+        if func is None:
+            self._cmd_land = None
+        else:
+            def wrapper(ns):
+                self._log_command("land", ns)
+                return func(ns)
+            self._cmd_land = wrapper
+    
+    @property
+    def cmd_rth(self):
+        return self._cmd_rth
+    
+    @cmd_rth.setter
+    def cmd_rth(self, func):
+        if func is None:
+            self._cmd_rth = None
+        else:
+            def wrapper(ns):
+                self._log_command("rth", ns)
+                return func(ns)
+            self._cmd_rth = wrapper
+    
+    @property
+    def cmd_goto_waypoint(self):
+        return self._cmd_goto_waypoint
+    
+    @cmd_goto_waypoint.setter
+    def cmd_goto_waypoint(self, func):
+        if func is None:
+            self._cmd_goto_waypoint = None
+        else:
+            def wrapper(ns, lat, lon, alt, yaw, speed=None):
+                self._log_command("goto_waypoint", ns, f"lat={lat:.6f}", f"lon={lon:.6f}", f"alt={alt:.1f}m", f"yaw={yaw:.1f}°", f"speed={speed}")
+                return func(ns, lat, lon, alt, yaw, speed) if speed else func(ns, lat, lon, alt, yaw)
+            self._cmd_goto_waypoint = wrapper
+    
+    @property
+    def cmd_goto_waypoint_dji_native(self):
+        return self._cmd_goto_waypoint_dji_native
+    
+    @cmd_goto_waypoint_dji_native.setter
+    def cmd_goto_waypoint_dji_native(self, func):
+        if func is None:
+            self._cmd_goto_waypoint_dji_native = None
+        else:
+            def wrapper(ns, lat, lon, alt, speed=None):
+                self._log_command("goto_waypoint_dji_native", ns, f"lat={lat:.6f}", f"lon={lon:.6f}", f"alt={alt:.1f}m", f"speed={speed}")
+                return func(ns, lat, lon, alt, speed) if speed else func(ns, lat, lon, alt)
+            self._cmd_goto_waypoint_dji_native = wrapper
+    
+    @property
+    def cmd_goto_altitude(self):
+        return self._cmd_goto_altitude
+    
+    @cmd_goto_altitude.setter
+    def cmd_goto_altitude(self, func):
+        if func is None:
+            self._cmd_goto_altitude = None
+        else:
+            def wrapper(ns, alt):
+                self._log_command("goto_altitude", ns, f"{alt:.1f}m")
+                return func(ns, alt)
+            self._cmd_goto_altitude = wrapper
+    
+    @property
+    def cmd_set_rth_altitude(self):
+        return self._cmd_set_rth_altitude
+    
+    @cmd_set_rth_altitude.setter
+    def cmd_set_rth_altitude(self, func):
+        if func is None:
+            self._cmd_set_rth_altitude = None
+        else:
+            def wrapper(ns, alt):
+                self._log_command("set_rth_altitude", ns, f"{alt:.1f}m")
+                return func(ns, alt)
+            self._cmd_set_rth_altitude = wrapper
+    
+    @property
+    def cmd_start_recording(self):
+        return self._cmd_start_recording
+    
+    @cmd_start_recording.setter
+    def cmd_start_recording(self, func):
+        if func is None:
+            self._cmd_start_recording = None
+        else:
+            def wrapper(ns):
+                self._log_command("start_recording", ns)
+                return func(ns)
+            self._cmd_start_recording = wrapper
+    
+    @property
+    def cmd_stop_recording(self):
+        return self._cmd_stop_recording
+    
+    @cmd_stop_recording.setter
+    def cmd_stop_recording(self, func):
+        if func is None:
+            self._cmd_stop_recording = None
+        else:
+            def wrapper(ns):
+                self._log_command("stop_recording", ns)
+                return func(ns)
+            self._cmd_stop_recording = wrapper
+    
+    @property
+    def cmd_set_gimbal_pitch(self):
+        return self._cmd_set_gimbal_pitch
+    
+    @cmd_set_gimbal_pitch.setter
+    def cmd_set_gimbal_pitch(self, func):
+        if func is None:
+            self._cmd_set_gimbal_pitch = None
+        else:
+            def wrapper(ns, pitch):
+                self._log_command("set_gimbal_pitch", ns, f"{pitch:.1f}°")
+                return func(ns, pitch)
+            self._cmd_set_gimbal_pitch = wrapper
+    
+    @property
+    def cmd_goto_yaw(self):
+        return self._cmd_goto_yaw
+    
+    @cmd_goto_yaw.setter
+    def cmd_goto_yaw(self, func):
+        if func is None:
+            self._cmd_goto_yaw = None
+        else:
+            def wrapper(ns, yaw):
+                self._log_command("goto_yaw", ns, f"{yaw:.1f}°")
+                return func(ns, yaw)
+            self._cmd_goto_yaw = wrapper
+    
+    @property
+    def cmd_abort(self):
+        return self._cmd_abort
+    
+    @cmd_abort.setter
+    def cmd_abort(self, func):
+        if func is None:
+            self._cmd_abort = None
+        else:
+            def wrapper(ns):
+                self._log_command("abort", ns)
+                return func(ns)
+            self._cmd_abort = wrapper
+
     # ========================================================================
     # DISTANCE CALCULATIONS
     # ========================================================================
@@ -465,6 +818,12 @@ class MissionController:
         self.relay_state = RelayState.ACTIVE
         self.current_drone_index = 0
         
+        # Reset relay launch flags
+        self._relay_launch_pending = False
+        self._pending_next_drone = ""
+        self._pending_next_index = 0
+        self._manual_swap_active = False
+        
         # Start mission thread
         if not self._running:
             self._running = True
@@ -642,18 +1001,21 @@ class MissionController:
             
             elapsed = now - mission.state_entry_time
             
+            takeoff_wait = 7.0
+            second_cmd_delay = 2.0
+            
             # Send first takeoff command immediately
             if not mission.takeoff_cmd_sent and self.cmd_takeoff:
                 self.cmd_takeoff(namespace)
                 mission.takeoff_cmd_sent = True
             
-            # Send second takeoff command after 2 seconds
-            if elapsed >= 2.0 and not mission.takeoff_second_cmd_sent and self.cmd_takeoff:
+            # Send second takeoff command after delay
+            if elapsed >= second_cmd_delay and not mission.takeoff_second_cmd_sent and self.cmd_takeoff:
                 self.cmd_takeoff(namespace)
                 mission.takeoff_second_cmd_sent = True
             
-            # After 7 seconds total (2s between commands + 5s stabilization), transition
-            if elapsed >= 7.0:
+            # After wait time, transition
+            if elapsed >= takeoff_wait:
                 # Start travel time measurement from beginning of climb
                 # (includes climb + transit for accurate relay timing estimation)
                 mission.transit_start_time = time.time()
@@ -677,7 +1039,7 @@ class MissionController:
             now = time.time()
             
             if self.get_altitude_reached:
-                altitude_reached = self.get_altitude_reached(namespace)
+                altitude_reached = altitude_reached or self.get_altitude_reached(namespace)
             
             if self.get_drone_position:
                 _, _, current_alt = self.get_drone_position(namespace)
@@ -692,12 +1054,13 @@ class MissionController:
             
             if altitude_reached:
                 # Non-blocking: wait 5 seconds before starting transit
+                wait_time = 5.0
                 if not mission.climb_wait_started:
                     mission.climb_wait_started = True
                     mission.state_entry_time = now
-                    self._emit_event(namespace, f"Altitude reached, stabilizing for 5s...")
-                elif now - mission.state_entry_time >= 5.0:
-                    # 5 seconds elapsed, start transit
+                    self._emit_event(namespace, f"Altitude reached, stabilizing for {wait_time}s...")
+                elif now - mission.state_entry_time >= wait_time:
+                    # Wait elapsed, start transit
                     mission.state = MissionState.TRANSIT_TO_MONITORING
                     mission.state_entry_time = 0.0  # Reset for next state
                     # Note: transit_start_time was set at beginning of climb for accurate total travel time
@@ -707,6 +1070,7 @@ class MissionController:
         elif mission.state == MissionState.TRANSIT_TO_MONITORING:
             # Log transit progress periodically
             now = time.time()
+            
             if self.get_drone_position:
                 lat, lon, _ = self.get_drone_position(namespace)
                 target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
@@ -723,6 +1087,7 @@ class MissionController:
             # Already recording, check if reached (by flag or distance)
             reached = False
             distance = float('inf')
+            now = time.time()
             
             # Check waypoint_reached flag
             if self.get_waypoint_reached and self.get_waypoint_reached(namespace):
@@ -738,7 +1103,6 @@ class MissionController:
                     reached = True
             
             # Log progress periodically
-            now = time.time()
             if now - mission.last_approach_log_time > 3.0:
                 mission.last_approach_log_time = now
                 self._emit_event(namespace, f"Approaching: {distance:.1f}m to target (tolerance: {self.config.position_tolerance}m)")
@@ -746,6 +1110,7 @@ class MissionController:
             if reached:
                 mission.state = MissionState.MONITORING
                 mission.monitoring_start_time = time.time()
+                mission.state_entry_time = 0.0  # Reset for debug mode timing
                 
                 # Record actual travel time
                 mission.actual_travel_time = time.time() - mission.transit_start_time
@@ -784,17 +1149,28 @@ class MissionController:
                             sync_mission = old_mission
                             sync_mission.camera_sync_next_state = "RTH"
                             sync_mission.camera_sync_partner_drone = ""  # No partner to notify, spinning drone goes RTH itself
+                            sync_mission.camera_sync_top_drone_ns = namespace  # New drone is the top drone
                             self._emit_event(old_ns, f"Lower drone ({old_alt}m) - will do 360° camera sync then RTH")
-                            # New drone just waits (stays in MONITORING state it just entered)
+                            # New drone (top drone) - set gimbal to -90° during sync
+                            if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
+                                sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(namespace)
+                                self.cmd_set_gimbal_pitch(namespace, -90.0)
+                                self._emit_event(namespace, f"Top drone gimbal set to -90° (was {sync_mission.camera_sync_top_drone_previous_gimbal:.1f}°)")
                         else:
                             # New drone (arriving) is lower - it does the spin, then continues monitoring
-                            # Old drone waits for spin to complete before RTH
+                            # Old drone (top drone) waits for spin to complete before RTH
                             sync_ns = namespace
                             sync_mission = mission
                             sync_mission.camera_sync_next_state = "MONITORING"
                             sync_mission.camera_sync_partner_drone = old_ns  # Old drone will be sent to RTH after spin
+                            sync_mission.camera_sync_top_drone_ns = old_ns  # Old drone is the top drone
                             self._emit_event(namespace, f"Lower drone ({new_alt}m) - will do 360° camera sync then monitor")
                             self._emit_event(old_ns, f"Higher drone ({old_alt}m) - waiting for spin to complete before RTH")
+                            # Old drone (top drone) - set gimbal to -90° during sync
+                            if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
+                                sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(old_ns)
+                                self.cmd_set_gimbal_pitch(old_ns, -90.0)
+                                self._emit_event(old_ns, f"Top drone gimbal set to -90° (was {sync_mission.camera_sync_top_drone_previous_gimbal:.1f}°)")
                             # Keep old drone in WAITING_FOR_RELAY - it will be sent to RTH after spin completes
                         
                         # Start camera sync on the LOWER drone
@@ -818,6 +1194,11 @@ class MissionController:
             # Drone is monitoring - relay logic handles transition
             pass
         
+        elif mission.state == MissionState.WAITING_FOR_RELAY:
+            # Drone waiting for relay - normally waits for new drone to arrive
+            # DEBUG MODE: This state transitions automatically when relay drone reaches MONITORING
+            pass
+        
         elif mission.state == MissionState.CAMERA_SYNC:
             # Camera synchronization sequence:
             # 1. Wait 10 seconds after relay drone arrives
@@ -828,8 +1209,9 @@ class MissionController:
             elapsed = time.time() - mission.camera_sync_start_time
             
             # Phase 1: Wait 10 seconds before starting yaw
+            wait_before_yaw = 10.0
             if not mission.camera_sync_yaw_started:
-                if elapsed >= 10.0:
+                if elapsed >= wait_before_yaw:
                     mission.camera_sync_yaw_started = True
                     
                     # Command 360° yaw rotation
@@ -899,13 +1281,15 @@ class MissionController:
             
             # Phase 3: Wait 10 seconds after yaw, then transition to next state (RTH or MONITORING)
             else:
-                if elapsed >= 10.0:
+                phase3_wait = 10.0
+                if elapsed >= phase3_wait:
                     self._emit_event(namespace, "360° yaw wait complete")
                     
                     if mission.camera_sync_next_state == "MONITORING":
                         # This drone continues monitoring (it was the arriving lower drone)
                         mission.state = MissionState.MONITORING
                         mission.monitoring_start_time = time.time()
+                        mission.state_entry_time = 0.0  # Reset for debug mode
                         self._update_status(namespace, mission.state, "Monitoring after camera sync")
                         self._emit_event(namespace, "Camera sync complete - now monitoring")
                         
@@ -915,6 +1299,11 @@ class MissionController:
                             if partner_ns in self.drone_missions:
                                 partner_mission = self.drone_missions[partner_ns]
                                 self._emit_event(partner_ns, "Spin complete - now departing")
+                                
+                                # Restore top drone's previous gimbal pitch
+                                if self.cmd_set_gimbal_pitch and mission.camera_sync_top_drone_previous_gimbal != 0.0:
+                                    self.cmd_set_gimbal_pitch(partner_ns, mission.camera_sync_top_drone_previous_gimbal)
+                                    self._emit_event(partner_ns, f"Gimbal restored to {mission.camera_sync_top_drone_previous_gimbal:.1f}°")
                                 
                                 # Stop recording on partner
                                 if partner_mission.video_started and self.cmd_stop_recording:
@@ -933,13 +1322,24 @@ class MissionController:
                                     self.cmd_rth(partner_ns)
                                 
                                 partner_mission.state = MissionState.RETURNING_HOME
+                                partner_mission.state_entry_time = 0.0  # Reset for debug mode
                                 partner_mission.rth_start_time = time.time()
                                 self._update_status(partner_ns, partner_mission.state, "Returning home after relay handoff")
+                                
+                                # Clear manual swap mode - swap is complete
+                                self._manual_swap_active = False
                             
                             # Clear the partner reference
                             mission.camera_sync_partner_drone = ""
                     else:
                         # This drone goes to RTH (default, it was the departing drone)
+                        # Restore top drone's previous gimbal pitch (new drone that's now monitoring)
+                        if mission.camera_sync_top_drone_ns and self.cmd_set_gimbal_pitch:
+                            top_drone_ns = mission.camera_sync_top_drone_ns
+                            if mission.camera_sync_top_drone_previous_gimbal != 0.0:
+                                self.cmd_set_gimbal_pitch(top_drone_ns, mission.camera_sync_top_drone_previous_gimbal)
+                                self._emit_event(top_drone_ns, f"Gimbal restored to {mission.camera_sync_top_drone_previous_gimbal:.1f}°")
+                        
                         # Stop recording
                         if mission.video_started and self.cmd_stop_recording:
                             self.cmd_stop_recording(namespace)
@@ -957,12 +1357,20 @@ class MissionController:
                             self.cmd_rth(namespace)
                         
                         mission.state = MissionState.RETURNING_HOME
+                        mission.state_entry_time = 0.0  # Reset for debug mode
                         mission.rth_start_time = time.time()
                         self._update_status(namespace, mission.state, "Returning home after camera sync")
                         self._emit_event(namespace, "Camera sync complete - returning home")
+                        
+                        # Clear manual swap mode - swap is complete
+                        self._manual_swap_active = False
         
         elif mission.state == MissionState.RETURNING_HOME:
             # Drone returning home - landing detection is handled by GUI
+            pass
+        
+        elif mission.state == MissionState.COMPLETED:
+            # Mission completed - drone has landed
             pass
     
     def _start_transit(self, namespace: str, mission: DroneMissionStatus):
@@ -973,31 +1381,32 @@ class MissionController:
         lat, lon, _ = self.get_drone_position(namespace)
         
         # Determine target position
-        # For relay missions, fly to where the current monitoring drone is (not just the config point)
+        # Default to configured monitoring point
         target_lat = self.config.monitoring_lat
         target_lon = self.config.monitoring_lon
         # Use the drone's assigned altitude (which includes vertical separation for safety)
         target_alt = mission.assigned_altitude
+        target_heading = self.config.monitoring_heading
         
-        if self.relay_state == RelayState.ACTIVE:
-            # Find the currently monitoring drone and use its position (but keep our assigned altitude!)
+        # For relay missions with a replacing_drone, use the captured snapshot position
+        # This was captured in _launch_relay_drone at the moment of launch
+        if mission.replacing_drone and mission.relay_target_lat != 0.0:
+            target_lat = mission.relay_target_lat
+            target_lon = mission.relay_target_lon
+            target_heading = mission.relay_target_heading
+            self._emit_event(namespace, f"Flying to captured position of {mission.replacing_drone}: ({target_lat:.6f}, {target_lon:.6f}) heading={target_heading:.1f}°")
+        elif self.relay_state == RelayState.ACTIVE:
+            # Fallback: try to find a currently monitoring drone (shouldn't happen in normal relay)
             current_monitoring_ns = self._get_currently_monitoring_drone(exclude=namespace)
             if current_monitoring_ns and self.get_drone_position:
                 mon_lat, mon_lon, _ = self.get_drone_position(current_monitoring_ns)
                 if mon_lat != 0.0 or mon_lon != 0.0:
                     target_lat = mon_lat
                     target_lon = mon_lon
-                    # Keep target_alt as mission.assigned_altitude for vertical separation!
                     self._emit_event(namespace, f"Target: current position of {current_monitoring_ns}")
-                
-        # Determine target heading: use monitoring drone's heading for relay, or configured heading
-        target_heading = self.config.monitoring_heading
-        if self.relay_state == RelayState.ACTIVE:
-            current_monitoring_ns = self._get_currently_monitoring_drone(exclude=namespace)
-            if current_monitoring_ns and self.get_drone_heading:
-                # Sync heading from currently monitoring drone
-                target_heading = self.get_drone_heading(current_monitoring_ns)
-                self._emit_event(namespace, f"Target heading synced to {target_heading:.1f}° from {current_monitoring_ns}")
+                if self.get_drone_heading:
+                    target_heading = self.get_drone_heading(current_monitoring_ns)
+                    self._emit_event(namespace, f"Target heading synced to {target_heading:.1f}° from {current_monitoring_ns}")
         
         # Store target position and heading for trajectory re-evaluation
         mission.target_lat = target_lat
@@ -1124,6 +1533,7 @@ class MissionController:
                 self.cmd_start_recording(namespace)
             mission.video_started = True
             mission.state = MissionState.APPROACHING_POINT
+            mission.state_entry_time = 0.0  # Reset for debug mode timing
             self._update_status(namespace, mission.state, f"Approaching target ({distance:.1f}m)")
             self._emit_event(namespace, f"Video recording started at {distance:.1f}m from target")
         
@@ -1145,6 +1555,7 @@ class MissionController:
             
             mission.state = MissionState.MONITORING
             mission.monitoring_start_time = time.time()
+            mission.state_entry_time = 0.0  # Reset for debug mode timing
             mission.actual_travel_time = time.time() - mission.transit_start_time
             self.travel_time_history.append(mission.actual_travel_time)
             self._update_status(namespace, mission.state, "Monitoring point reached")
@@ -1153,15 +1564,20 @@ class MissionController:
     def _update_relay_logic(self):
         """Update relay timing and launch next drone if needed."""
         if self.relay_state != RelayState.ACTIVE:
+            # Reset pending launch if relay is no longer active
+            self._relay_launch_pending = False
             return
         
         if self.current_drone_index >= len(self.drone_order):
+            self._relay_launch_pending = False
             return
         
         current_ns = self.drone_order[self.current_drone_index]
         current_mission = self.drone_missions.get(current_ns)
         
         if not current_mission or current_mission.state != MissionState.MONITORING:
+            # No drone is currently monitoring - don't launch a relay
+            self._relay_launch_pending = False
             return
         
         # Get remaining flight time
@@ -1190,7 +1606,9 @@ class MissionController:
         }
 
         if self.on_relay_countdown:
-            self.on_relay_countdown(countdown, next_ns, timing_breakdown)        # Mark launch as pending when countdown <= 0
+            self.on_relay_countdown(countdown, next_ns, timing_breakdown)
+        
+        # Mark launch as pending when countdown <= 0
         # This ensures we don't miss the launch if countdown fluctuates back to positive
         if countdown <= 0:
             if not self._relay_launch_pending:
@@ -1199,8 +1617,9 @@ class MissionController:
                 self._pending_next_index = next_index
                 self._emit_event(next_ns, "Relay launch triggered - waiting for drone to be ready")
         
-        # Try to launch if pending (either countdown <= 0 now, or was <= 0 before)
-        if self._relay_launch_pending:
+        # Try to launch if pending AND countdown is still <= 0
+        # Double-check countdown to prevent stale _relay_launch_pending from triggering launch
+        if self._relay_launch_pending and countdown <= 0:
             pending_mission = self.drone_missions.get(self._pending_next_drone)
             if pending_mission and pending_mission.state == MissionState.IDLE:
                 self._launch_relay_drone(self._pending_next_drone, self._pending_next_index)
@@ -1240,7 +1659,20 @@ class MissionController:
             # Mark this drone as replacing the old one
             # RTH will be triggered when THIS drone reaches MONITORING state
             mission.replacing_drone = old_ns
-            self._emit_event(namespace, f"Will replace {old_ns} upon arrival at monitoring point")
+            
+            # SNAPSHOT: Capture the old drone's current position and heading
+            # The replacement drone will fly to this position (not the monitoring point)
+            if self.get_drone_position:
+                old_lat, old_lon, _ = self.get_drone_position(old_ns)
+                mission.relay_target_lat = old_lat
+                mission.relay_target_lon = old_lon
+                self._emit_event(namespace, f"Captured {old_ns} position: ({old_lat:.6f}, {old_lon:.6f})")
+            
+            if self.get_drone_heading:
+                mission.relay_target_heading = self.get_drone_heading(old_ns)
+                self._emit_event(namespace, f"Captured {old_ns} heading: {mission.relay_target_heading:.1f}°")
+            
+            self._emit_event(namespace, f"Will replace {old_ns} at its current position")
             
             # Put old drone in WAITING_FOR_RELAY state
             old_mission.state = MissionState.WAITING_FOR_RELAY
@@ -1250,6 +1682,58 @@ class MissionController:
         # Update current drone index to the new drone
         self.current_drone_index = index
     
+    def force_relay_swap(self) -> tuple[bool, str]:
+        """
+        Force a relay swap manually, bypassing the countdown timer.
+        
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        if not self.drone_order:
+            return False, "No drones in relay mission"
+        
+        if len(self.drone_order) < 2:
+            return False, "Need at least 2 drones for relay swap"
+        
+        # Find the next drone in the sequence
+        next_index = (self.current_drone_index + 1) % len(self.drone_order)
+        next_ns = self.drone_order[next_index]
+        next_mission = self.drone_missions.get(next_ns)
+        
+        if not next_mission:
+            return False, f"Next drone {next_ns} not found"
+        
+        # Check if next drone is ready (IDLE state)
+        if next_mission.state != MissionState.IDLE:
+            return False, f"Next drone {next_ns} not ready (state: {next_mission.state.name})"
+        
+        # Check current drone is monitoring
+        current_ns = self.drone_order[self.current_drone_index]
+        current_mission = self.drone_missions.get(current_ns)
+        
+        if not current_mission or current_mission.state != MissionState.MONITORING:
+            return False, f"Current drone {current_ns} not monitoring"
+        
+        # Set manual swap mode active
+        self._manual_swap_active = True
+        
+        # Clear any pending automatic launch to prevent double launches
+        self._relay_launch_pending = False
+        
+        # Force launch the next drone
+        self._emit_event(next_ns, "Manual swap triggered - launching relay drone")
+        self._launch_relay_drone(next_ns, next_index)
+        
+        return True, f"Manual swap initiated: {next_ns} launching to replace {current_ns}"
+    
+    def is_manual_swap_active(self) -> bool:
+        """Check if a manual swap is currently in progress."""
+        return self._manual_swap_active
+    
+    def clear_manual_swap_mode(self):
+        """Clear manual swap mode (called when swap completes)."""
+        self._manual_swap_active = False
+
     # ========================================================================
     # CALLBACKS
     # ========================================================================
@@ -1264,6 +1748,12 @@ class MissionController:
         logger.info(f"[{namespace}] {event}")
         if self.on_mission_event:
             self.on_mission_event(namespace, event)
+        
+        # Write to CSV
+        state = ""
+        if namespace in self.drone_missions:
+            state = self.drone_missions[namespace].state.name
+        self._write_csv_event(namespace, state, event)
     
     def _sync_gimbal_pitch(self, namespace: str):
         """
@@ -1699,6 +2189,46 @@ class MissionController:
         
         return True
     
+    def mark_drone_ready(self, namespace: str) -> bool:
+        """
+        Manually mark a drone as ready (IDLE) for next relay cycle.
+        
+        Called by GUI when user clicks the Ready button.
+        Similar to notify_battery_swap but without battery detection.
+        
+        Args:
+            namespace: The drone namespace
+            
+        Returns:
+            True if state was updated, False otherwise
+        """
+        if namespace not in self.drone_missions:
+            return False
+        
+        mission = self.drone_missions[namespace]
+        
+        # Only reset if drone has completed its mission
+        if mission.state != MissionState.COMPLETED:
+            return False
+        
+        # Reset mission state for reuse
+        mission.state = MissionState.IDLE
+        mission.error_message = ""
+        mission.retry_count = 0
+        mission.mission_start_time = None
+        mission.monitoring_start_time = None
+        mission.transit_start_time = None
+        mission.video_started = False
+        mission.replacing_drone = ""
+        mission.relay_target_lat = 0.0
+        mission.relay_target_lon = 0.0
+        mission.relay_target_heading = 0.0
+        
+        self._emit_event(namespace, "Manually marked as ready for next relay cycle")
+        self._update_status(namespace, mission.state, "Ready for next mission")
+        
+        return True
+    
     def notify_battery_swap(self, namespace: str) -> bool:
         """
         Notify that a drone's battery has been swapped.
@@ -1730,6 +2260,9 @@ class MissionController:
         mission.transit_start_time = None
         mission.video_started = False
         mission.replacing_drone = ""
+        mission.relay_target_lat = 0.0
+        mission.relay_target_lon = 0.0
+        mission.relay_target_heading = 0.0
         
         self._emit_event(namespace, "Battery swapped - ready for next relay cycle")
         self._update_status(namespace, mission.state, "Ready for next mission")

@@ -46,6 +46,8 @@ Thumbs.db
 # ROS bags
 *.bag
 *.db3
+src/rosbags/*
+!src/rosbags/.gitkeep
 
 # Temporary files
 *.tmp
