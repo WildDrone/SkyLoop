@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Python dependencies
+RUN pip3 install nicegui
+
 # Arguments to create a user matching the host UID/GID
 ARG UID=1000
 ARG GID=1000
@@ -48,6 +51,12 @@ RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
     echo "source /WildPerpetua/install/setup.bash" >> ~/.bashrc && \
     echo "alias build='cd /WildPerpetua && colcon build --symlink-install && source install/setup.bash'" >> ~/.bashrc && \
     echo "alias build-pkg='cd /WildPerpetua && colcon build --symlink-install --packages-select'" >> ~/.bashrc
+
+# Copy and set entrypoint
+COPY entrypoint.sh /entrypoint.sh
+
+# Set entrypoint
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Default command
 CMD ["/bin/bash"]

@@ -10,14 +10,19 @@ services:
     stdin_open: true
     tty: true
     network_mode: host
+    ipc: host
+    pid: host
     environment:
       - DISPLAY=${DISPLAY}
       - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
       - QT_X11_NO_MITSHM=1
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/WildPerpetua/fastdds.xml
     volumes:
       - ./src:/WildPerpetua/src           # Live workspace mount
       - /tmp/.X11-unix:/tmp/.X11-unix:rw # X11 socket for GUI
       - /dev/dri:/dev/dri                 # GPU access
+      - ./fastdds.xml:/WildPerpetua/fastdds.xml:ro  # DDS config
     devices:
       - /dev/dri:/dev/dri
     command: bash
