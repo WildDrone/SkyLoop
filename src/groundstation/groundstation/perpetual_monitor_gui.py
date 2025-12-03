@@ -2416,7 +2416,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if self.mission_stats_scroll:
             self.mission_stats_scroll.scroll_to(percent=1.0)
 
-    async def _restart_groundstation(self):
+    def _restart_groundstation(self):
         """Reset the groundstation state (soft restart)."""
         # Confirm with user
         with ui.dialog() as dialog, ui.card():

@@ -10,8 +10,9 @@ RUN apt-get update && apt-get install -y \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-RUN pip3 install nicegui
+# Copy and install Python dependencies
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Arguments to create a user matching the host UID/GID
 ARG UID=1000

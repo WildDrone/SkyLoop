@@ -1,0 +1,28 @@
+# WildPerpetua Python Dependencies
+# Generated from current working environment
+
+# NiceGUI Web Framework
+# Pin to 3.2.0 or specify compatible version
+nicegui==3.2.0
+
+# FastAPI - pinned due to compatibility issue with NiceGUI
+# See: https://github.com/zauberzeug/nicegui/issues/5535
+fastapi==0.116.1
+starlette==0.47.3
+
+# ASGI Server
+uvicorn==0.38.0
+uvloop==0.22.1
+
+# HTTP/Networking
+httpx==0.28.1
+aiohttp==3.13.2
+aiofiles==25.1.0
+websockets==15.0.1
+
+# Data validation
+pydantic==2.12.5
+
+# Utilities
+python-dotenv==1.2.1
+orjson==3.11.4
