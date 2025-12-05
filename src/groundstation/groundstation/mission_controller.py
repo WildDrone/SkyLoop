@@ -49,6 +49,12 @@ class RelayState(Enum):
     STOPPED = auto()
 
 
+class MissionMode(Enum):
+    """Mission flight mode."""
+    MONITORING_POINT = auto()  # Fly to defined monitoring point
+    FREE_FLIGHT = auto()  # Pilot manually controls after reaching altitude
+
+
 @dataclass
 class MissionWaypoint:
     """A waypoint in the mission."""
@@ -132,6 +138,9 @@ class RelayMissionConfig:
     monitoring_alt: float = 50.0
     monitoring_heading: float = 0.0  # Target heading/yaw at monitoring point (degrees)
     
+    # Mission mode
+    mission_mode: MissionMode = MissionMode.MONITORING_POINT
+    
     base_rth_altitude: float = 50.0
     altitude_separation: float = 15.0
     video_trigger_distance: float = 50.0
@@ -141,6 +150,7 @@ class RelayMissionConfig:
     min_battery_to_launch: float = 30.0
     min_satellites: int = 8
     max_retry_count: int = 3
+    min_vertical_separation: float = 5.0  # meters - minimum safe altitude difference
     
     # Timing
     preflight_wait_seconds: float = 3.0
@@ -196,15 +206,19 @@ class MissionController:
         # Manual swap mode - bypasses countdown timer
         self._manual_swap_active: bool = False
         
-        # Navigation mode: False = PID (5 m/s), True = DJI Native (10 m/s)
-        self.use_dji_native: bool = False
+        # Continuous position tracking for replacement drone
+        self._last_trajectory_update_time: float = 0.0
+        self._trajectory_update_interval: float = 10.0  # seconds
+        
+        # Vertical separation safety
+        self._vertical_separation_warning_active: bool = False
+        self._vertical_separation_aborted_drone: str = ""
         
         # Callbacks for drone commands (set by ROS node)
         self._cmd_takeoff: Optional[Callable[[str], None]] = None
         self._cmd_land: Optional[Callable[[str], None]] = None
         self._cmd_rth: Optional[Callable[[str], None]] = None
         self._cmd_goto_waypoint: Optional[Callable[[str, float, float, float, float], None]] = None
-        self._cmd_goto_waypoint_dji_native: Optional[Callable[[str, float, float, float], None]] = None  # DJI Native mode
         self._cmd_goto_altitude: Optional[Callable[[str, float], None]] = None
         self._cmd_set_rth_altitude: Optional[Callable[[str, float], None]] = None
         self._cmd_start_recording: Optional[Callable[[str], None]] = None
@@ -226,11 +240,20 @@ class MissionController:
         self.get_altitude_reached: Optional[Callable[[str], bool]] = None
         self.get_configured_speed: Optional[Callable[[], float]] = None  # Get UI-configured speed
         self.get_connected_drones: Optional[Callable[[], List[str]]] = None  # Get list of connected drone namespaces
+        self.get_flight_mode: Optional[Callable[[str], str]] = None  # Get drone flight mode (for manual control detection)
         
         # Status callback (for GUI updates)
         self.on_status_update: Optional[Callable[[str, MissionState, str], None]] = None
         self.on_relay_countdown: Optional[Callable[[float, str, dict], None]] = None  # countdown, next_drone, timing_breakdown
         self.on_mission_event: Optional[Callable[[str, str], None]] = None
+        self.on_takeoff_confirmation_request: Optional[Callable[[str, Callable[[bool], None]], None]] = None  # drone_name, callback(confirmed)
+        self.on_vertical_separation_warning: Optional[Callable[[str, str, float], None]] = None  # drone1, drone2, separation
+        
+        # Takeoff confirmation tracking for relay auto-launch
+        self._takeoff_confirmation_pending: bool = False
+        self._takeoff_confirmation_shown_for_drone: str = ""
+        self._takeoff_confirmed: bool = False
+        self._takeoff_cancelled: bool = False
         
         # Travel time history for estimation
         self.travel_time_history: List[float] = []
@@ -876,6 +899,70 @@ class MissionController:
             mission.state = MissionState.ABORTED
             self._emit_event(namespace, "Mission aborted")
     
+    def abort_drone_mission(self, namespace: str, reason: str = "Mission aborted"):
+        """Abort mission for a specific drone with custom reason."""
+        if namespace in self.drone_missions:
+            mission = self.drone_missions[namespace]
+            
+            if mission.video_started and self.cmd_stop_recording:
+                self.cmd_stop_recording(namespace)
+            
+            # Trigger RTH instead of just abort (safer)
+            if self.cmd_rth:
+                self.cmd_rth(namespace)
+            elif self.cmd_abort:
+                self.cmd_abort(namespace)
+            
+            mission.state = MissionState.ABORTED
+            self._emit_event(namespace, reason)
+    
+    def pin_drone_location(self, namespace: str) -> bool:
+        """
+        Pin drone's current location as the new monitoring point.
+        
+        This is useful for free flight mode - pilot flies to a good location,
+        then pins it to switch to monitoring point mode.
+        
+        Args:
+            namespace: The drone to use as the location source
+            
+        Returns:
+            True if location was pinned successfully
+        """
+        if not self.get_drone_position:
+            self._emit_event(namespace, "Cannot pin location - position not available")
+            return False
+        
+        lat, lon, alt = self.get_drone_position(namespace)
+        
+        if lat == 0.0 and lon == 0.0:
+            self._emit_event(namespace, "Cannot pin location - invalid coordinates")
+            return False
+        
+        # Get heading if available
+        heading = 0.0
+        if self.get_drone_heading:
+            heading = self.get_drone_heading(namespace)
+        
+        # Update config with new monitoring point
+        self.config.monitoring_lat = lat
+        self.config.monitoring_lon = lon
+        self.config.monitoring_heading = heading
+        
+        # Switch to monitoring point mode
+        self.mission_mode = MissionMode.MONITORING_POINT
+        
+        # Update target for any active missions
+        for ns, mission in self.drone_missions.items():
+            if mission.state in [MissionState.MONITORING, MissionState.TRANSIT_TO_MONITORING, MissionState.APPROACHING_POINT]:
+                mission.target_lat = lat
+                mission.target_lon = lon
+        
+        self._emit_event(namespace, f"📍 Location pinned: ({lat:.6f}, {lon:.6f}) heading={heading:.0f}°")
+        logger.info(f"Pinned location from {namespace}: ({lat}, {lon}, {alt}) heading={heading}")
+        
+        return True
+    
     def add_drone_to_relay(self, namespace: str) -> bool:
         """
         Add a new drone to an ongoing relay mission.
@@ -934,6 +1021,8 @@ class MissionController:
                 # Update relay logic
                 if self.relay_state == RelayState.ACTIVE:
                     self._update_relay_logic()
+                    # Check vertical separation during relay operations
+                    self._check_vertical_separation()
                 
                 time.sleep(self._update_interval)
                 
@@ -1060,12 +1149,22 @@ class MissionController:
                     mission.state_entry_time = now
                     self._emit_event(namespace, f"Altitude reached, stabilizing for {wait_time}s...")
                 elif now - mission.state_entry_time >= wait_time:
-                    # Wait elapsed, start transit
-                    mission.state = MissionState.TRANSIT_TO_MONITORING
+                    # Wait elapsed - check mission mode
                     mission.state_entry_time = 0.0  # Reset for next state
-                    # Note: transit_start_time was set at beginning of climb for accurate total travel time
-                    self._start_transit(namespace, mission)
-                    self._update_status(namespace, mission.state, "Transit to monitoring point")
+                    
+                    if self.mission_mode == MissionMode.FREE_FLIGHT:
+                        # FREE FLIGHT MODE: Transition to monitoring (hover in place)
+                        # Don't navigate to monitoring point - let pilot fly manually
+                        mission.state = MissionState.MONITORING
+                        mission.monitoring_start_time = time.time()
+                        self._emit_event(namespace, "FREE FLIGHT: Pilot has control. Drone holding position.")
+                        self._update_status(namespace, mission.state, "Free flight - pilot control")
+                    else:
+                        # MONITORING POINT MODE: Navigate to monitoring point (default behavior)
+                        mission.state = MissionState.TRANSIT_TO_MONITORING
+                        # Note: transit_start_time was set at beginning of climb for accurate total travel time
+                        self._start_transit(namespace, mission)
+                        self._update_status(namespace, mission.state, "Transit to monitoring point")
         
         elif mission.state == MissionState.TRANSIT_TO_MONITORING:
             # Log transit progress periodically
@@ -1080,6 +1179,13 @@ class MissionController:
                 if now - mission.last_transit_log_time > 5.0:
                     mission.last_transit_log_time = now
                     self._emit_event(namespace, f"Transit: {distance:.1f}m to target")
+            
+            # CONTINUOUS POSITION TRACKING for relay replacement drones
+            # Update target every 10 seconds to follow the moving monitoring drone
+            if mission.replacing_drone and self.relay_state == RelayState.ACTIVE:
+                if now - self._last_trajectory_update_time >= self._trajectory_update_interval:
+                    self._last_trajectory_update_time = now
+                    self._update_replacement_target(namespace, mission)
             
             self._check_approach(namespace, mission)
         
@@ -1467,6 +1573,64 @@ class MissionController:
                 target_heading
             )
     
+    def _update_replacement_target(self, namespace: str, mission: DroneMissionStatus):
+        """
+        Update the target position for a replacement drone during transit.
+        
+        This is called every 10 seconds to continuously track the position
+        of the drone being replaced, ensuring the replacement drone follows
+        any movement of the monitoring drone.
+        
+        Args:
+            namespace: The replacement drone namespace
+            mission: The replacement drone's mission status
+        """
+        if not mission.replacing_drone:
+            return
+        
+        old_ns = mission.replacing_drone
+        old_mission = self.drone_missions.get(old_ns)
+        
+        # Only track if the old drone is still monitoring or waiting
+        if not old_mission or old_mission.state not in [MissionState.MONITORING, MissionState.WAITING_FOR_RELAY]:
+            return
+        
+        if not self.get_drone_position:
+            return
+        
+        # Get current position of the drone being replaced
+        new_lat, new_lon, _ = self.get_drone_position(old_ns)
+        
+        if new_lat == 0.0 and new_lon == 0.0:
+            return
+        
+        # Check if position has changed significantly (more than 5 meters)
+        old_lat = mission.relay_target_lat
+        old_lon = mission.relay_target_lon
+        distance_moved = self.haversine_distance(old_lat, old_lon, new_lat, new_lon)
+        
+        if distance_moved < 5.0:
+            # Position hasn't changed significantly, no need to update
+            return
+        
+        # Get new heading
+        new_heading = mission.relay_target_heading
+        if self.get_drone_heading:
+            new_heading = self.get_drone_heading(old_ns)
+        
+        # Update target
+        mission.relay_target_lat = new_lat
+        mission.relay_target_lon = new_lon
+        mission.relay_target_heading = new_heading
+        mission.target_lat = new_lat
+        mission.target_lon = new_lon
+        mission.target_heading = new_heading
+        
+        self._emit_event(namespace, f"Target updated: {old_ns} moved {distance_moved:.1f}m → ({new_lat:.6f}, {new_lon:.6f})")
+        
+        # Send updated waypoint command
+        self._send_updated_trajectory(namespace, mission)
+    
     def _get_currently_monitoring_drone(self, exclude: str = None) -> Optional[str]:
         """
         Get the namespace of the drone currently in MONITORING state.
@@ -1608,6 +1772,30 @@ class MissionController:
         if self.on_relay_countdown:
             self.on_relay_countdown(countdown, next_ns, timing_breakdown)
         
+        # Show takeoff confirmation dialog 30 seconds before launch
+        if countdown <= 30 and countdown > 0:
+            if not self._takeoff_confirmation_pending and self._takeoff_confirmation_shown_for_drone != next_ns:
+                # Request user confirmation
+                self._takeoff_confirmation_pending = True
+                self._takeoff_confirmation_shown_for_drone = next_ns
+                self._takeoff_confirmed = False
+                self._takeoff_cancelled = False
+                
+                if self.on_takeoff_confirmation_request:
+                    self._emit_event(next_ns, "Requesting takeoff confirmation from user...")
+                    self.on_takeoff_confirmation_request(next_ns, self._handle_takeoff_confirmation)
+        
+        # Check if user cancelled the mission
+        if self._takeoff_cancelled:
+            self._emit_event(next_ns, "User cancelled relay mission")
+            self._takeoff_cancelled = False
+            self._takeoff_confirmation_pending = False
+            self._takeoff_confirmation_shown_for_drone = ""
+            self._relay_launch_pending = False
+            # Stop relay without affecting airborne drone
+            self.relay_state = RelayState.INACTIVE
+            return
+        
         # Mark launch as pending when countdown <= 0
         # This ensures we don't miss the launch if countdown fluctuates back to positive
         if countdown <= 0:
@@ -1615,15 +1803,23 @@ class MissionController:
                 self._relay_launch_pending = True
                 self._pending_next_drone = next_ns
                 self._pending_next_index = next_index
-                self._emit_event(next_ns, "Relay launch triggered - waiting for drone to be ready")
+                self._emit_event(next_ns, "Relay launch triggered - waiting for confirmation")
         
-        # Try to launch if pending AND countdown is still <= 0
+        # Try to launch if pending AND countdown is still <= 0 AND user has confirmed
         # Double-check countdown to prevent stale _relay_launch_pending from triggering launch
         if self._relay_launch_pending and countdown <= 0:
+            # Wait for user confirmation before launching
+            if self._takeoff_confirmation_pending and not self._takeoff_confirmed:
+                return  # Still waiting for user confirmation
+            
             pending_mission = self.drone_missions.get(self._pending_next_drone)
             if pending_mission and pending_mission.state == MissionState.IDLE:
                 self._launch_relay_drone(self._pending_next_drone, self._pending_next_index)
                 self._relay_launch_pending = False  # Reset after successful launch
+                self._takeoff_confirmation_pending = False
+                self._takeoff_confirmed = False
+                # NOTE: Don't reset _takeoff_confirmation_shown_for_drone here
+                # It will be reset when current_drone_index changes (new relay cycle)
     
     def _launch_relay_drone(self, namespace: str, index: int):
         """Launch the next drone in the relay sequence."""
@@ -1681,6 +1877,74 @@ class MissionController:
         
         # Update current drone index to the new drone
         self.current_drone_index = index
+        
+        # Reset confirmation tracking for next relay cycle
+        self._takeoff_confirmation_shown_for_drone = ""
+    
+    def _handle_takeoff_confirmation(self, confirmed: bool):
+        """Handle user's response to takeoff confirmation dialog."""
+        if confirmed:
+            self._takeoff_confirmed = True
+            self._emit_event(self._takeoff_confirmation_shown_for_drone, "Takeoff confirmed by user")
+        else:
+            self._takeoff_cancelled = True
+            self._emit_event(self._takeoff_confirmation_shown_for_drone, "Takeoff cancelled by user")
+    
+    def _check_vertical_separation(self):
+        """
+        Check vertical separation between drones during relay operations.
+        Alert if two drones are within 5 meters vertically (critical safety issue).
+        
+        This is called during active relay operations when drones are in transit.
+        """
+        # Only check every 2 seconds to avoid spamming
+        now = time.time()
+        if now - self._last_vertical_separation_check < 2.0:
+            return
+        self._last_vertical_separation_check = now
+        
+        # Get all drones that are airborne (not IDLE or ERROR)
+        airborne_drones = []
+        for ns, mission in self.drone_missions.items():
+            if mission.state not in [MissionState.IDLE, MissionState.ERROR]:
+                # Get altitude
+                altitude = 0.0
+                if self.get_drone_altitude:
+                    altitude = self.get_drone_altitude(ns)
+                airborne_drones.append((ns, altitude, mission.state))
+        
+        # Check all pairs for vertical separation
+        MIN_VERTICAL_SEPARATION = 5.0  # meters
+        
+        for i, (ns1, alt1, state1) in enumerate(airborne_drones):
+            for ns2, alt2, state2 in airborne_drones[i+1:]:
+                vertical_sep = abs(alt1 - alt2)
+                
+                if vertical_sep < MIN_VERTICAL_SEPARATION:
+                    # Critical safety alert!
+                    warning_msg = (
+                        f"CRITICAL: Vertical separation between {ns1} ({alt1:.1f}m) "
+                        f"and {ns2} ({alt2:.1f}m) is only {vertical_sep:.1f}m! "
+                        f"Minimum required: {MIN_VERTICAL_SEPARATION}m"
+                    )
+                    logger.warning(warning_msg)
+                    self._emit_event(ns1, warning_msg)
+                    
+                    # Trigger the alert callback
+                    if self.on_vertical_separation_alert:
+                        self.on_vertical_separation_alert(ns1, ns2, vertical_sep, alt1, alt2)
+                    
+                    # If one drone is climbing (TAKING_OFF or CLIMBING) and getting too close
+                    # to another drone, we should abort its mission
+                    climbing_states = [MissionState.TAKING_OFF, MissionState.CLIMBING_TO_ALTITUDE]
+                    
+                    # Abort the climbing drone's mission (the one that should move away)
+                    if state1 in climbing_states:
+                        self._emit_event(ns1, f"ABORTING {ns1} mission due to vertical separation violation!")
+                        self.abort_drone_mission(ns1, "Vertical separation too small - RTH triggered")
+                    elif state2 in climbing_states:
+                        self._emit_event(ns2, f"ABORTING {ns2} mission due to vertical separation violation!")
+                        self.abort_drone_mission(ns2, "Vertical separation too small - RTH triggered")
     
     def force_relay_swap(self) -> tuple[bool, str]:
         """

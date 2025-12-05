@@ -8,6 +8,7 @@ Author: Edouard Rolland
 Project: WildDrone
 """
 
+import asyncio
 import threading
 from typing import Dict
 from pathlib import Path
@@ -137,6 +138,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.drone_recording_update = Event()
         self.drone_satellite_update = Event()
         self.drone_speed_update = Event()
+        self.drone_flight_mode_update = Event()  # Flight mode (virtual_stick, manual, etc.)
         self.drone_connected_event = Event()
         self.drone_disconnected_event = Event()
         self.monitoring_point_update = Event()
@@ -211,6 +213,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Battery swap detection (track last battery level per drone)
         self.drone_last_battery: Dict[str, float] = {}
         
+        # Trajectory tracking for flight paths
+        self.drone_trajectories: Dict[str, list] = {}  # {ns: [(lat, lon), ...]}
+        self.drone_trajectory_lines: Dict[str, object] = {}  # {ns: leaflet polyline layer}
+        self.drone_is_flying: Dict[str, bool] = {}  # {ns: True if currently flying}
+        
         # State machine display elements
         self.state_machine_container = None
         self.state_machine_labels: Dict[str, Dict[str, ui.label]] = {}
@@ -235,6 +242,21 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Drone colors for visualization
         self.drone_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
+        
+        # Pending takeoff drone name (for dialog re-show on cancel->cancel)
+        self._pending_takeoff_drone = ""
+        
+        # Register takeoff confirmation callback
+        self.mission_controller.on_takeoff_confirmation_request = self._on_takeoff_confirmation_request
+        
+        # Register vertical separation alert callback
+        self.mission_controller.on_vertical_separation_alert = self._on_vertical_separation_alert
+        
+        # Register drone flight mode callback for manual flight detection
+        self.mission_controller.get_drone_flight_mode = self._get_drone_flight_mode
+        
+        # Register drone altitude callback for separation check  
+        self.mission_controller.get_drone_altitude = self._get_drone_altitude
         
         # Define the main page
         @ui.page('/')
@@ -353,6 +375,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.drone_speed_update.emit({
             'namespace': namespace,
             'speed': speed
+        })
+    
+    def _on_flight_mode(self, namespace: str, mode: str):
+        """Override flight mode callback to emit event and track manual control."""
+        super()._on_flight_mode(namespace, mode)
+        self.drone_flight_mode_update.emit({
+            'namespace': namespace,
+            'flight_mode': mode
         })
     
     def _on_mission_status_update(self, namespace: str, state: MissionState, message: str):
@@ -487,6 +517,63 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             'timing_breakdown': timing_breakdown or {}
         })
     
+    def _on_takeoff_confirmation_request(self, drone_name: str, callback):
+        """Handle takeoff confirmation request from mission controller (relay auto-launch)."""
+        # This is called from the mission controller thread, so we need to use ui.timer
+        # to trigger the dialog in the UI thread
+        
+        async def show_dialog():
+            confirmed = await self._show_takeoff_confirmation_dialog(drone_name)
+            callback(confirmed)
+        
+        # Schedule the dialog to run in the UI thread
+        try:
+            ui.timer(0.1, lambda: asyncio.create_task(show_dialog()), once=True)
+        except Exception as e:
+            self._emit_log(f"[ERROR] Failed to show confirmation dialog: {e}")
+            callback(False)
+    
+    def _on_vertical_separation_alert(self, drone1: str, drone2: str, separation: float, alt1: float, alt2: float):
+        """Handle vertical separation alert from mission controller."""
+        # Play alert sound and show notification
+        async def show_alert():
+            # Play warning sound
+            ui.run_javascript('''
+                var audio = new Audio("/static/vertical_separation.mp3");
+                audio.play().catch(function(e) { console.log("Audio play failed:", e); });
+            ''')
+            
+            # Show critical notification
+            ui.notify(
+                f'⚠️ CRITICAL: Vertical separation alert!\n'
+                f'{drone1} ({alt1:.1f}m) and {drone2} ({alt2:.1f}m)\n'
+                f'Separation: {separation:.1f}m (min 5m required)',
+                type='negative',
+                position='top',
+                timeout=10000,
+                close_button=True
+            )
+            
+            self._emit_log(f"[ALERT] VERTICAL SEPARATION: {drone1}={alt1:.1f}m, {drone2}={alt2:.1f}m, sep={separation:.1f}m")
+        
+        # Schedule in UI thread
+        try:
+            ui.timer(0.1, lambda: asyncio.create_task(show_alert()), once=True)
+        except Exception as e:
+            self._emit_log(f"[ERROR] Failed to show separation alert: {e}")
+    
+    def _get_drone_flight_mode(self, namespace: str) -> str:
+        """Get drone's current flight mode for manual flight detection."""
+        if namespace in self.drones:
+            return self.drones[namespace].flight_mode or ""
+        return ""
+    
+    def _get_drone_altitude(self, namespace: str) -> float:
+        """Get drone's current altitude for vertical separation check."""
+        if namespace in self.drones:
+            return self.drones[namespace].altitude or 0.0
+        return 0.0
+    
     def connect_drone(self, ip_address: str, namespace: str = None) -> bool:
         """Override connect_drone to emit event on success."""
         result = super().connect_drone(ip_address, namespace)
@@ -554,6 +641,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.drone_buttons.clear()
         self.monitoring_marker = None
         self.monitoring_circle = None
+        
+        # Clear trajectory data on page refresh (polylines need to be recreated with new map)
+        self.drone_trajectory_lines.clear()
+        # Keep drone_trajectories data so we can redraw if needed
+        # Keep drone_is_flying state
         
         # Add CSS and JS (cache-busting with version parameter)
         ui.add_head_html("""
@@ -627,6 +719,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             if ns in self.drone_arrows:
                 heading = self.drones[ns].heading if ns in self.drones else 0.0
                 self.drone_arrows[ns].update(lat, lon, heading)
+            
+            # Update trajectory if drone is flying
+            if self.drone_is_flying.get(ns, False) and (lat != 0.0 or lon != 0.0):
+                self._update_drone_trajectory(ns, lat, lon)
             
             # Update altitude label
             if ns in self.drone_labels and 'altitude' in self.drone_labels[ns]:
@@ -706,6 +802,21 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             if ns in self.drone_labels and 'speed' in self.drone_labels[ns]:
                 self.drone_labels[ns]['speed'].text = f"{speed:.1f}m/s"
         
+        @self.drone_flight_mode_update.subscribe
+        def on_flight_mode(data: dict):
+            """Update manual flight indicator when flight mode changes."""
+            ns = data['namespace']
+            mode = data['flight_mode']
+            
+            if ns in self.drone_labels and 'manual_indicator' in self.drone_labels[ns]:
+                # Show indicator if NOT in virtual_stick mode (pilot has manual control)
+                is_manual = mode.lower() != 'virtual_stick' and mode.lower() != 'unknown'
+                if is_manual:
+                    self.drone_labels[ns]['manual_indicator'].style('display: inline-flex')
+                    self._emit_log(f"[{ns}] Manual control detected: {mode}")
+                else:
+                    self.drone_labels[ns]['manual_indicator'].style('display: none')
+        
         @self.rth_predictor_update.subscribe
         def on_rth_predictor(data: dict):
             ns = data['namespace']
@@ -765,6 +876,29 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ns = data['namespace']
             state = data['state']
             
+            # Track flying state for trajectory
+            flying_states = [
+                DroneState.TAKING_OFF,
+                DroneState.FLYING_TO_POINT,
+                DroneState.MONITORING,
+                DroneState.WAITING_FOR_RELAY,
+                DroneState.CAMERA_SYNC,
+                DroneState.RETURNING_HOME,
+            ]
+            
+            was_flying = self.drone_is_flying.get(ns, False)
+            is_flying = state in flying_states
+            
+            # Start new trajectory on takeoff
+            if not was_flying and is_flying:
+                self._start_drone_trajectory(ns)
+            
+            # Clear trajectory with fade on landing
+            if was_flying and not is_flying:
+                self._fade_and_clear_trajectory(ns)
+            
+            self.drone_is_flying[ns] = is_flying
+            
             if ns in self.drone_labels and 'state' in self.drone_labels[ns]:
                 # Use simple text labels - icons are in the card header
                 state_colors = {
@@ -821,6 +955,17 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 del self.drone_arrows[ns]
             if ns in self.drone_labels:
                 del self.drone_labels[ns]
+            # Clean up trajectory data
+            if ns in self.drone_trajectory_lines and self.drone_trajectory_lines[ns]:
+                try:
+                    self.map.remove_layer(self.drone_trajectory_lines[ns])
+                except:
+                    pass
+                del self.drone_trajectory_lines[ns]
+            if ns in self.drone_trajectories:
+                del self.drone_trajectories[ns]
+            if ns in self.drone_is_flying:
+                del self.drone_is_flying[ns]
             self._build_state_machine_display()  # Update state machine display
         
         @self.monitoring_point_update.subscribe
@@ -1258,11 +1403,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         ui.label("Trajectory").classes('text-sm font-bold')
                         ui.space()
                         ui.button('Abort', icon='cancel', on_click=self._abort_trajectories).props('dense flat size=xs color=red')
-                    self.trajectory_mode = ui.toggle(
-                        {1: 'PID', 2: 'DJI'}, 
-                        value=1,
-                        on_change=self._on_trajectory_mode_change
-                    ).props('dense spread no-caps size=sm').classes('w-full mt-2')
+                    # PID navigation only (DJI Native removed for safety)
+                    ui.label('Navigation: PID').classes('text-xs text-gray-600 mt-2')
                     with ui.row().classes('w-full items-center gap-1 mt-1'):
                         ui.icon('speed').classes('text-sm').style('color: #8e24aa;')
                         self.trajectory_speed_slider = ui.slider(
@@ -1279,6 +1421,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         ui.space()
                         # ROS bag recording toggle
                         self.rosbag_switch = ui.switch('🤖 Record ROS Bag', value=False, on_change=self._on_rosbag_change).props('dense size=sm').tooltip('Record all ROS topics to bag file')
+                    # Mission mode toggle: Monitoring Point vs Free Flight
+                    self.mission_mode_toggle = ui.toggle(
+                        {1: '📍 Monitor', 2: '🆓 Free Flight'}, 
+                        value=1,
+                        on_change=self._on_mission_mode_change
+                    ).props('dense spread no-caps size=sm').classes('w-full mt-2').tooltip(
+                        'Monitor: Drone flies to point and hovers. Free Flight: Pilot controls after reaching altitude.')
                     with ui.grid(columns=2).classes('w-full gap-1 mt-2'):
                         self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').classes('w-full')
                         self.safety_buffer_input = ui.input(label='Buffer (s)', value='60').props('dense outlined').classes('w-full')
@@ -1492,6 +1641,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             with ui.row().classes('w-full items-center gap-3'):
                 ui.icon('circle').style(f'color: {color}; font-size: 20px')
                 ui.label(f"{namespace}").classes('font-bold text-xl').style('flex: 1')
+                # Manual flight indicator (shown when NOT in virtual_stick mode)
+                manual_badge = ui.badge('🎮 MANUAL', color='orange').classes('ml-2').tooltip('Pilot has manual control (not virtual stick)')
+                manual_badge.style('display: none')  # Hidden by default
+                self.drone_labels[namespace]['manual_indicator'] = manual_badge
                 self.drone_labels[namespace]['state'] = ui.label(f"{drone.state.value}").classes('text-base px-3 py-1 rounded bg-gray-200')
                 with ui.row().classes('items-center gap-1'):
                     ui.icon('battery_full').style('font-size: 28px')
@@ -1555,6 +1708,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 ui.button(icon='videocam', on_click=lambda ns=namespace: self.send_start_recording(ns)).props('flat color=red').tooltip('Start Recording')
                 ui.button(icon='stop', on_click=lambda ns=namespace: self.send_stop_recording(ns)).props('flat').tooltip('Stop Recording')
                 ui.button(icon='my_location', on_click=lambda ns=namespace: self.set_monitoring_point_from_drone(ns)).props('flat').tooltip('Use as monitoring point')
+                ui.button(icon='push_pin', on_click=lambda ns=namespace: self._pin_drone_location(ns)).props('flat color=purple').tooltip('📍 Pin current location (Free Flight → Monitoring Point)')
                 self.drone_buttons[namespace]['ready'] = ui.button(icon='check_circle', on_click=lambda ns=namespace: self._mark_drone_ready(ns)).props('flat color=green').tooltip('Mark as Ready (battery swapped)')
                 ui.button(icon='link_off', on_click=lambda ns=namespace: self._disconnect_drone_ui(ns)).props('flat color=negative').tooltip('Disconnect')
             
@@ -1623,6 +1777,31 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         else:
             ui.notify(f'Cannot disconnect {namespace} (may be in flight)', type='warning')
     
+    def _pin_drone_location(self, namespace: str):
+        """Pin drone's current location as monitoring point and switch to Monitoring Point mode."""
+        if not self.mission_controller:
+            ui.notify('No mission controller active', type='warning')
+            return
+        
+        if self.mission_controller.pin_drone_location(namespace):
+            # Update mission mode toggle in UI
+            if hasattr(self, 'mission_mode_toggle') and self.mission_mode_toggle:
+                self.mission_mode_toggle.value = 1  # Switch to "Monitor" mode
+            
+            # Update monitoring point on map
+            lat, lon, alt = 0.0, 0.0, 0.0
+            if namespace in self.drones:
+                lat = self.drones[namespace].latitude
+                lon = self.drones[namespace].longitude
+                alt = self.drones[namespace].altitude
+                heading = self.drones[namespace].heading
+                self.set_monitoring_point(lat, lon, alt, heading, source=f"pinned:{namespace}")
+            
+            ui.notify(f'📍 Location pinned from {namespace}! Mode switched to Monitoring Point.', type='positive')
+            self._emit_log(f"[PIN] Location pinned from {namespace}: ({lat:.6f}, {lon:.6f}, {alt:.1f}m)")
+        else:
+            ui.notify(f'Failed to pin location from {namespace}', type='warning')
+    
     def _mark_drone_ready(self, namespace: str):
         """Mark a drone as ready (IDLE) for next relay cycle."""
         if not self.mission_controller:
@@ -1638,6 +1817,122 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             })
         else:
             ui.notify(f'{namespace} cannot be marked ready (not in COMPLETED state)', type='warning')
+    
+    # ========================================================================
+    # TRAJECTORY TRACKING
+    # ========================================================================
+    
+    def _start_drone_trajectory(self, namespace: str):
+        """Start tracking a new trajectory for a drone (called on takeoff)."""
+        # Clear any existing trajectory
+        self.drone_trajectories[namespace] = []
+        
+        # Remove existing polyline if any
+        if namespace in self.drone_trajectory_lines and self.drone_trajectory_lines[namespace]:
+            try:
+                self.map.remove_layer(self.drone_trajectory_lines[namespace])
+            except:
+                pass
+            self.drone_trajectory_lines[namespace] = None
+        
+        self._emit_log(f"[{namespace}] Trajectory tracking started")
+    
+    def _update_drone_trajectory(self, namespace: str, lat: float, lon: float):
+        """Add a point to the drone's trajectory and update the map."""
+        if namespace not in self.drone_trajectories:
+            self.drone_trajectories[namespace] = []
+        
+        trajectory = self.drone_trajectories[namespace]
+        
+        # Only add point if it's different from the last one (avoid duplicates)
+        if not trajectory or (trajectory[-1][0] != lat or trajectory[-1][1] != lon):
+            trajectory.append((lat, lon))
+            
+            # Update polyline on map (need at least 2 points)
+            if len(trajectory) >= 2 and self.map:
+                # Get drone color
+                color = '#FF6B6B'  # default
+                if namespace in self.drone_arrows:
+                    color = self.drone_arrows[namespace].color
+                
+                # Remove old polyline
+                if namespace in self.drone_trajectory_lines and self.drone_trajectory_lines[namespace]:
+                    try:
+                        self.map.remove_layer(self.drone_trajectory_lines[namespace])
+                    except:
+                        pass
+                
+                # Create new polyline with all points
+                self.drone_trajectory_lines[namespace] = self.map.generic_layer(
+                    name='polyline',
+                    args=[
+                        [[p[0], p[1]] for p in trajectory],
+                        {'color': color, 'weight': 3, 'opacity': 0.8}
+                    ]
+                )
+    
+    def _fade_and_clear_trajectory(self, namespace: str):
+        """Fade out and clear a drone's trajectory (called on landing)."""
+        if namespace not in self.drone_trajectory_lines or not self.drone_trajectory_lines[namespace]:
+            # No trajectory to clear
+            if namespace in self.drone_trajectories:
+                self.drone_trajectories[namespace] = []
+            return
+        
+        self._emit_log(f"[{namespace}] Trajectory tracking stopped - fading out")
+        
+        # Fade out over 3 seconds using opacity steps
+        polyline = self.drone_trajectory_lines[namespace]
+        trajectory = self.drone_trajectories.get(namespace, [])
+        
+        if not trajectory or len(trajectory) < 2:
+            # Nothing to fade, just clear
+            try:
+                self.map.remove_layer(polyline)
+            except:
+                pass
+            self.drone_trajectory_lines[namespace] = None
+            self.drone_trajectories[namespace] = []
+            return
+        
+        # Get drone color
+        color = '#FF6B6B'
+        if namespace in self.drone_arrows:
+            color = self.drone_arrows[namespace].color
+        
+        # Create fade-out animation using timers
+        def fade_step(opacity: float):
+            if namespace not in self.drone_trajectory_lines:
+                return
+            
+            try:
+                # Remove old polyline
+                if self.drone_trajectory_lines[namespace]:
+                    self.map.remove_layer(self.drone_trajectory_lines[namespace])
+                
+                if opacity > 0:
+                    # Create new polyline with reduced opacity
+                    self.drone_trajectory_lines[namespace] = self.map.generic_layer(
+                        name='polyline',
+                        args=[
+                            [[p[0], p[1]] for p in trajectory],
+                            {'color': color, 'weight': 3, 'opacity': opacity}
+                        ]
+                    )
+                else:
+                    # Final step - clear everything
+                    self.drone_trajectory_lines[namespace] = None
+                    self.drone_trajectories[namespace] = []
+            except:
+                pass
+        
+        # Schedule fade steps (3 seconds total, 6 steps)
+        ui.timer(0.5, lambda: fade_step(0.6), once=True)
+        ui.timer(1.0, lambda: fade_step(0.4), once=True)
+        ui.timer(1.5, lambda: fade_step(0.3), once=True)
+        ui.timer(2.0, lambda: fade_step(0.2), once=True)
+        ui.timer(2.5, lambda: fade_step(0.1), once=True)
+        ui.timer(3.0, lambda: fade_step(0.0), once=True)
     
     def _refresh_drone_list(self):
         """Refresh the drone list display."""
@@ -1770,6 +2065,20 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         drone_ns = list(self.drones.keys())[0]
         
+        # Show takeoff confirmation dialog
+        async def confirm_and_start():
+            self._pending_takeoff_drone = drone_ns
+            confirmed = await self._show_takeoff_confirmation_dialog(drone_ns)
+            if not confirmed:
+                ui.notify('Mission cancelled', type='warning')
+                return
+            
+            self._do_start_single_mission(drone_ns)
+        
+        asyncio.create_task(confirm_and_start())
+    
+    def _do_start_single_mission(self, drone_ns: str):
+        """Actually start the single mission after confirmation."""
         try:
             rth_alt = float(self.rth_alt_input.value)
         except ValueError:
@@ -1840,7 +2149,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             )
         
         drone_list = list(self.drones.keys())
+        first_drone = drone_list[0]
         
+        # Show takeoff confirmation dialog for the first drone
+        async def confirm_and_start():
+            self._pending_takeoff_drone = first_drone
+            confirmed = await self._show_takeoff_confirmation_dialog(first_drone)
+            if not confirmed:
+                ui.notify('Relay mission cancelled', type='warning')
+                return
+            
+            self._do_start_relay_mission(drone_list, travel_time, distance)
+        
+        asyncio.create_task(confirm_and_start())
+    
+    def _do_start_relay_mission(self, drone_list: list, travel_time: float, distance: float):
+        """Actually start the relay mission after confirmation."""
         try:
             rth_alt = float(self.rth_alt_input.value)
         except ValueError:
@@ -1998,18 +2322,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     self._emit_log(f"[ROSBAG] Error stopping: {ex}")
     
     def _on_trajectory_mode_change(self, e):
-        """Handle trajectory mode toggle change."""
-        use_dji_native = (e.value == 2)  # 1=PID, 2=DJI Native
-        
-        # Update mission controller's navigation mode (self IS the ROS node)
+        """Handle trajectory mode toggle change (deprecated - PID only now)."""
+        # PID is always used now (DJI Native removed for safety)
         if hasattr(self, 'mission_controller'):
-            self.mission_controller.use_dji_native = use_dji_native
+            self.mission_controller.use_dji_native = False
         
-        # Get current speed from slider
         speed = self.trajectory_speed_slider.value if self.trajectory_speed_slider else 10
-        mode_name = f"DJI Native ({speed} m/s)" if use_dji_native else f"PID ({speed} m/s)"
-        ui.notify(f'Navigation mode: {mode_name}', type='info')
-        self._emit_log(f"[CONFIG] Navigation mode set to {mode_name}")
+        ui.notify(f'Navigation mode: PID ({speed} m/s)', type='info')
+        self._emit_log(f"[CONFIG] Navigation mode set to PID ({speed} m/s)")
     
     def _on_trajectory_speed_change(self, e):
         """Handle trajectory speed slider change."""
@@ -2022,8 +2342,26 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Update speed for both modes (self IS the ROS node)
         self.DJI_NATIVE_SPEED = float(speed)
         self.PID_SPEED = float(speed)
+    
+    def _on_mission_mode_change(self, e):
+        """Handle mission mode toggle change (Monitoring Point vs Free Flight)."""
+        from groundstation.mission_controller import MissionMode
         
-        self._emit_log(f"[CONFIG] Navigation speed set to {speed} m/s")
+        if e.value == 1:
+            mode = MissionMode.MONITORING_POINT
+            mode_name = "📍 Monitoring Point"
+            mode_desc = "Drone flies to monitoring point and hovers"
+        else:
+            mode = MissionMode.FREE_FLIGHT
+            mode_name = "🆓 Free Flight"
+            mode_desc = "Pilot controls drone after reaching altitude"
+        
+        # Update mission controller's mode
+        if hasattr(self, 'mission_controller'):
+            self.mission_controller.mission_mode = mode
+        
+        ui.notify(f'{mode_name}: {mode_desc}', type='info')
+        self._emit_log(f"[CONFIG] Mission mode set to {mode_name}")
     
     def _abort_trajectories(self):
         """Abort all trajectories."""
@@ -2416,6 +2754,87 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if self.mission_stats_scroll:
             self.mission_stats_scroll.scroll_to(percent=1.0)
 
+    async def _show_takeoff_confirmation_dialog(self, drone_name: str) -> bool:
+        """Show takeoff confirmation dialog and return user's choice."""
+        result = {'confirmed': None}
+        
+        with ui.dialog() as dialog, ui.card().classes('p-4'):
+            ui.label(f'🚁 Takeoff Confirmation').classes('text-xl font-bold text-blue-700')
+            ui.separator()
+            ui.label(f'Drone "{drone_name}" will take off.').classes('text-lg mt-2')
+            ui.label('Confirm to proceed with takeoff.').classes('text-sm text-gray-600 mt-1')
+            
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=lambda: self._handle_takeoff_cancel(dialog, result), color='red').props('flat')
+                ui.button('Confirm', on_click=lambda: self._handle_takeoff_confirm(dialog, result), color='primary')
+        
+        dialog.open()
+        
+        # Wait for user response
+        while result['confirmed'] is None:
+            await asyncio.sleep(0.1)
+        
+        return result['confirmed']
+    
+    async def _show_abort_confirmation_dialog(self) -> bool:
+        """Show abort confirmation dialog and return user's choice."""
+        result = {'confirmed': None}
+        
+        with ui.dialog() as dialog, ui.card().classes('p-4'):
+            ui.label('⚠️ Abort Mission?').classes('text-xl font-bold text-red-700')
+            ui.separator()
+            ui.label('Are you sure you want to abort the mission?').classes('text-lg mt-2')
+            ui.label('The relay system will stop. Airborne drones will continue unaffected.').classes('text-sm text-gray-600 mt-1')
+            
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=lambda: self._handle_abort_cancel(dialog, result)).props('flat')
+                ui.button('Confirm Abort', on_click=lambda: self._handle_abort_confirm(dialog, result), color='red')
+        
+        dialog.open()
+        
+        # Wait for user response
+        while result['confirmed'] is None:
+            await asyncio.sleep(0.1)
+        
+        return result['confirmed']
+    
+    def _handle_takeoff_confirm(self, dialog, result):
+        """Handle confirm button click in takeoff dialog."""
+        result['confirmed'] = True
+        dialog.close()
+        # Play takeoff confirmation sound
+        ui.run_javascript('''
+            var audio = new Audio("/static/take_off.mp3");
+            audio.play().catch(function(e) { console.log("Audio play failed:", e); });
+        ''')
+    
+    def _handle_takeoff_cancel(self, dialog, result):
+        """Handle cancel button click in takeoff dialog - show abort confirmation."""
+        dialog.close()
+        
+        async def show_abort():
+            abort_confirmed = await self._show_abort_confirmation_dialog()
+            if abort_confirmed:
+                result['confirmed'] = False
+                self._emit_log("[MISSION] User aborted mission from takeoff confirmation")
+            else:
+                # User cancelled the abort, show takeoff dialog again
+                result['confirmed'] = None
+                confirmed = await self._show_takeoff_confirmation_dialog(self._pending_takeoff_drone if hasattr(self, '_pending_takeoff_drone') else 'drone')
+                result['confirmed'] = confirmed
+        
+        asyncio.create_task(show_abort())
+    
+    def _handle_abort_confirm(self, dialog, result):
+        """Handle confirm button click in abort dialog."""
+        result['confirmed'] = True
+        dialog.close()
+    
+    def _handle_abort_cancel(self, dialog, result):
+        """Handle cancel button click in abort dialog."""
+        result['confirmed'] = False
+        dialog.close()
+    
     def _restart_groundstation(self):
         """Reset the groundstation state (soft restart)."""
         # Confirm with user
@@ -2488,6 +2907,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Reinitialize mission controller
         self.mission_controller = MissionController()
         self._setup_mission_controller_callbacks()
+        self.mission_controller.on_takeoff_confirmation_request = self._on_takeoff_confirmation_request
         
         # Reset UI state
         self._mission_start_time = None
