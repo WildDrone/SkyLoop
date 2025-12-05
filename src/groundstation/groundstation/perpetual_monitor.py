@@ -704,7 +704,7 @@ class PerpetualMonitorNode(Node):
         mc.get_is_recording = lambda ns: self.drones[ns].is_recording if ns in self.drones else False
         mc.get_waypoint_reached = lambda ns: self.drones[ns].waypoint_reached if ns in self.drones else False
         mc.get_altitude_reached = lambda ns: self.drones[ns].altitude_reached if ns in self.drones else False
-        mc.get_configured_speed = lambda: self.DJI_NATIVE_SPEED if mc.use_dji_native else self.PID_SPEED
+        mc.get_configured_speed = lambda: self.PID_SPEED  # Always use PID navigation
         mc.get_connected_drones = lambda: list(self.drones.keys())
         
         # Status callbacks

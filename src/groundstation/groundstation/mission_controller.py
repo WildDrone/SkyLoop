@@ -180,6 +180,10 @@ class MissionController:
     def __init__(self):
         self.config = RelayMissionConfig()
         self.relay_state = RelayState.INACTIVE
+        self.mission_mode = MissionMode.MONITORING_POINT  # Default to monitoring point mode
+        
+        # Navigation mode (DJI Native removed - always use PID)
+        self.use_dji_native = False  # Always False - PID navigation only
         
         # Command and event logging
         self._command_log: List[str] = []  # Log of all commands sent
@@ -213,6 +217,13 @@ class MissionController:
         # Vertical separation safety
         self._vertical_separation_warning_active: bool = False
         self._vertical_separation_aborted_drone: str = ""
+        self._last_vertical_separation_check: float = 0.0
+        
+        # Vertical separation countdown (20 seconds before RTH)
+        self._vertical_separation_countdown_active: bool = False
+        self._vertical_separation_countdown_start: float = 0.0
+        self._vertical_separation_countdown_duration: float = 20.0  # seconds
+        self._vertical_separation_violating_drones: tuple = ()  # (drone1, drone2)
         
         # Callbacks for drone commands (set by ROS node)
         self._cmd_takeoff: Optional[Callable[[str], None]] = None
@@ -232,6 +243,7 @@ class MissionController:
         self.get_drone_home_position: Optional[Callable[[str], Tuple[float, float]]] = None  # home lat, lon
         self.get_drone_heading: Optional[Callable[[str], float]] = None
         self.get_drone_gimbal_pitch: Optional[Callable[[str], float]] = None
+        self.get_drone_altitude: Optional[Callable[[str], float]] = None  # Get drone altitude for vertical separation check
         self.get_remaining_flight_time: Optional[Callable[[str], float]] = None
         self.get_battery_level: Optional[Callable[[str], float]] = None
         self.get_satellite_count: Optional[Callable[[str], int]] = None
@@ -248,6 +260,9 @@ class MissionController:
         self.on_mission_event: Optional[Callable[[str, str], None]] = None
         self.on_takeoff_confirmation_request: Optional[Callable[[str, Callable[[bool], None]], None]] = None  # drone_name, callback(confirmed)
         self.on_vertical_separation_warning: Optional[Callable[[str, str, float], None]] = None  # drone1, drone2, separation
+        self.on_vertical_separation_alert: Optional[Callable[[str, str, float, float, float], None]] = None  # drone1, drone2, separation, alt1, alt2
+        self.on_vertical_separation_countdown_start: Optional[Callable[[], None]] = None  # Start 20s countdown audio
+        self.on_vertical_separation_countdown_cancel: Optional[Callable[[], None]] = None  # Cancel countdown, play respected sound
         
         # Takeoff confirmation tracking for relay auto-launch
         self._takeoff_confirmation_pending: bool = False
@@ -1153,12 +1168,47 @@ class MissionController:
                     mission.state_entry_time = 0.0  # Reset for next state
                     
                     if self.mission_mode == MissionMode.FREE_FLIGHT:
-                        # FREE FLIGHT MODE: Transition to monitoring (hover in place)
-                        # Don't navigate to monitoring point - let pilot fly manually
-                        mission.state = MissionState.MONITORING
-                        mission.monitoring_start_time = time.time()
-                        self._emit_event(namespace, "FREE FLIGHT: Pilot has control. Drone holding position.")
-                        self._update_status(namespace, mission.state, "Free flight - pilot control")
+                        # FREE FLIGHT MODE behavior depends on whether this is a relay drone
+                        if mission.replacing_drone:
+                            # RELAY DRONE in Free Flight: Navigate to current drone's position
+                            # Capture target position from the drone we're replacing
+                            old_ns = mission.replacing_drone
+                            if self.get_drone_position:
+                                old_lat, old_lon, _ = self.get_drone_position(old_ns)
+                                mission.relay_target_lat = old_lat
+                                mission.relay_target_lon = old_lon
+                                mission.target_lat = old_lat
+                                mission.target_lon = old_lon
+                                self._emit_event(namespace, f"FREE FLIGHT RELAY: Flying to {old_ns} position ({old_lat:.6f}, {old_lon:.6f})")
+                            if self.get_drone_heading:
+                                mission.relay_target_heading = self.get_drone_heading(old_ns)
+                                mission.target_heading = mission.relay_target_heading
+                            
+                            # Put old drone in WAITING_FOR_RELAY state
+                            old_mission = self.drone_missions.get(old_ns)
+                            if old_mission:
+                                old_mission.state = MissionState.WAITING_FOR_RELAY
+                                self._update_status(old_ns, old_mission.state, f"Waiting for {namespace} to arrive")
+                                self._emit_event(old_ns, f"Waiting for {namespace} to arrive for relay handoff")
+                            
+                            # Start transit to the other drone's position
+                            mission.state = MissionState.TRANSIT_TO_MONITORING
+                            mission.transit_start_time = time.time()
+                            self._start_transit(namespace, mission)
+                            self._update_status(namespace, mission.state, "Transit to relay position")
+                        else:
+                            # FIRST DRONE in Free Flight: Start recording and give pilot control
+                            mission.state = MissionState.MONITORING
+                            mission.monitoring_start_time = time.time()
+                            
+                            # Start video recording immediately
+                            if self.cmd_start_recording and not mission.video_started:
+                                self.cmd_start_recording(namespace)
+                                mission.video_started = True
+                                self._emit_event(namespace, "FREE FLIGHT: Recording started")
+                            
+                            self._emit_event(namespace, "FREE FLIGHT: Pilot has control. Drone holding position.")
+                            self._update_status(namespace, mission.state, "Free flight - pilot control")
                     else:
                         # MONITORING POINT MODE: Navigate to monitoring point (default behavior)
                         mission.state = MissionState.TRANSIT_TO_MONITORING
@@ -1396,8 +1446,14 @@ class MissionController:
                         mission.state = MissionState.MONITORING
                         mission.monitoring_start_time = time.time()
                         mission.state_entry_time = 0.0  # Reset for debug mode
-                        self._update_status(namespace, mission.state, "Monitoring after camera sync")
-                        self._emit_event(namespace, "Camera sync complete - now monitoring")
+                        
+                        # In Free Flight mode, pilot now has control
+                        if self.mission_mode == MissionMode.FREE_FLIGHT:
+                            self._update_status(namespace, mission.state, "FREE FLIGHT: Camera sync complete, pilot has control")
+                            self._emit_event(namespace, "FREE FLIGHT: Camera sync complete - pilot now has control")
+                        else:
+                            self._update_status(namespace, mission.state, "Monitoring after camera sync")
+                            self._emit_event(namespace, "Camera sync complete - now monitoring")
                         
                         # Now send the partner drone (old/departing drone) to RTH
                         if mission.camera_sync_partner_drone:
@@ -1916,11 +1972,18 @@ class MissionController:
         # Check all pairs for vertical separation
         MIN_VERTICAL_SEPARATION = 5.0  # meters
         
+        # Track if any violation exists this check
+        violation_found = False
+        violation_drones = None
+        
         for i, (ns1, alt1, state1) in enumerate(airborne_drones):
             for ns2, alt2, state2 in airborne_drones[i+1:]:
                 vertical_sep = abs(alt1 - alt2)
                 
                 if vertical_sep < MIN_VERTICAL_SEPARATION:
+                    violation_found = True
+                    violation_drones = (ns1, ns2, alt1, alt2, vertical_sep, state1, state2)
+                    
                     # Critical safety alert!
                     warning_msg = (
                         f"CRITICAL: Vertical separation between {ns1} ({alt1:.1f}m) "
@@ -1930,21 +1993,80 @@ class MissionController:
                     logger.warning(warning_msg)
                     self._emit_event(ns1, warning_msg)
                     
-                    # Trigger the alert callback
-                    if self.on_vertical_separation_alert:
+                    # Trigger the alert callback (for UI sound/notification)
+                    if self.on_vertical_separation_alert and not self._vertical_separation_countdown_active:
                         self.on_vertical_separation_alert(ns1, ns2, vertical_sep, alt1, alt2)
                     
-                    # If one drone is climbing (TAKING_OFF or CLIMBING) and getting too close
-                    # to another drone, we should abort its mission
+                    break  # Only handle one violation at a time
+            if violation_found:
+                break
+        
+        # Handle countdown logic
+        current_time = time.time()
+        
+        if violation_found:
+            ns1, ns2, alt1, alt2, vertical_sep, state1, state2 = violation_drones
+            
+            if not self._vertical_separation_countdown_active:
+                # Start the 20-second countdown
+                self._vertical_separation_countdown_active = True
+                self._vertical_separation_countdown_start = current_time
+                self._vertical_separation_violating_drones = (ns1, ns2)
+                
+                self._emit_event(ns1, f"⏱️ 20-SECOND COUNTDOWN STARTED - RTH will trigger if separation not restored!")
+                logger.warning(f"Vertical separation countdown started for {ns1} and {ns2}")
+                
+                # Trigger countdown audio
+                logger.info(f"Countdown callback registered: {self.on_vertical_separation_countdown_start is not None}")
+                if self.on_vertical_separation_countdown_start:
+                    logger.info("Calling on_vertical_separation_countdown_start callback")
+                    self.on_vertical_separation_countdown_start()
+                else:
+                    logger.warning("on_vertical_separation_countdown_start callback is NOT registered!")
+            else:
+                # Countdown already active - check if 20 seconds have passed
+                elapsed = current_time - self._vertical_separation_countdown_start
+                
+                if elapsed >= self._vertical_separation_countdown_duration:
+                    # 20 seconds passed - trigger RTH on the climbing drone
                     climbing_states = [MissionState.TAKING_OFF, MissionState.CLIMBING_TO_ALTITUDE]
+                    
+                    self._emit_event(ns1, f"⚠️ COUNTDOWN EXPIRED - Triggering RTH due to vertical separation violation!")
+                    logger.warning(f"Vertical separation countdown expired - aborting mission")
                     
                     # Abort the climbing drone's mission (the one that should move away)
                     if state1 in climbing_states:
                         self._emit_event(ns1, f"ABORTING {ns1} mission due to vertical separation violation!")
-                        self.abort_drone_mission(ns1, "Vertical separation too small - RTH triggered")
+                        self.abort_drone_mission(ns1, "Vertical separation too small - RTH triggered after 20s countdown")
                     elif state2 in climbing_states:
                         self._emit_event(ns2, f"ABORTING {ns2} mission due to vertical separation violation!")
-                        self.abort_drone_mission(ns2, "Vertical separation too small - RTH triggered")
+                        self.abort_drone_mission(ns2, "Vertical separation too small - RTH triggered after 20s countdown")
+                    else:
+                        # Neither is climbing - abort the lower one
+                        if alt1 < alt2:
+                            self._emit_event(ns1, f"ABORTING {ns1} (lower drone) due to vertical separation violation!")
+                            self.abort_drone_mission(ns1, "Vertical separation too small - RTH triggered after 20s countdown")
+                        else:
+                            self._emit_event(ns2, f"ABORTING {ns2} (lower drone) due to vertical separation violation!")
+                            self.abort_drone_mission(ns2, "Vertical separation too small - RTH triggered after 20s countdown")
+                    
+                    # Reset countdown
+                    self._vertical_separation_countdown_active = False
+                    self._vertical_separation_violating_drones = ()
+        else:
+            # No violation - check if we need to cancel an active countdown
+            if self._vertical_separation_countdown_active:
+                self._vertical_separation_countdown_active = False
+                old_drones = self._vertical_separation_violating_drones
+                self._vertical_separation_violating_drones = ()
+                
+                if old_drones:
+                    self._emit_event(old_drones[0], f"✅ VERTICAL SEPARATION RESTORED - Countdown cancelled, mission continues!")
+                    logger.info(f"Vertical separation restored between {old_drones[0]} and {old_drones[1]} - countdown cancelled")
+                
+                # Trigger the "respected" audio
+                if self.on_vertical_separation_countdown_cancel:
+                    self.on_vertical_separation_countdown_cancel()
     
     def force_relay_swap(self) -> tuple[bool, str]:
         """

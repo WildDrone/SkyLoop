@@ -9,6 +9,7 @@ Project: WildDrone
 """
 
 import asyncio
+import math
 import threading
 from typing import Dict
 from pathlib import Path
@@ -158,6 +159,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.log_message_queue: list = []
         self._should_start_timer = False  # Flag for starting mission timer from UI thread
         
+        # Vertical separation alert queue (for thread-safe UI updates)
+        self._vertical_separation_alerts: list = []
+        
+        # Notification queue (for thread-safe UI notifications from background threads)
+        self._notification_queue: list = []
+        
         # Monitoring point marker
         self.monitoring_marker = None
         self.monitoring_circle = None
@@ -245,12 +252,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Pending takeoff drone name (for dialog re-show on cancel->cancel)
         self._pending_takeoff_drone = ""
+        self._pending_single_mission = False
+        self._pending_relay_mission = False
+        self._pending_relay_data = {}
+        
+        # Vertical separation countdown state
+        self._vertical_separation_countdown_active = False
         
         # Register takeoff confirmation callback
         self.mission_controller.on_takeoff_confirmation_request = self._on_takeoff_confirmation_request
         
         # Register vertical separation alert callback
         self.mission_controller.on_vertical_separation_alert = self._on_vertical_separation_alert
+        
+        # Register vertical separation countdown callbacks
+        self.mission_controller.on_vertical_separation_countdown_start = self._on_vertical_separation_countdown_start
+        self.mission_controller.on_vertical_separation_countdown_cancel = self._on_vertical_separation_countdown_cancel
         
         # Register drone flight mode callback for manual flight detection
         self.mission_controller.get_drone_flight_mode = self._get_drone_flight_mode
@@ -534,33 +551,53 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             callback(False)
     
     def _on_vertical_separation_alert(self, drone1: str, drone2: str, separation: float, alt1: float, alt2: float):
-        """Handle vertical separation alert from mission controller."""
-        # Play alert sound and show notification
-        async def show_alert():
-            # Play warning sound
-            ui.run_javascript('''
-                var audio = new Audio("/static/vertical_separation.mp3");
-                audio.play().catch(function(e) { console.log("Audio play failed:", e); });
-            ''')
-            
-            # Show critical notification
-            ui.notify(
-                f'⚠️ CRITICAL: Vertical separation alert!\n'
-                f'{drone1} ({alt1:.1f}m) and {drone2} ({alt2:.1f}m)\n'
-                f'Separation: {separation:.1f}m (min 5m required)',
-                type='negative',
-                position='top',
-                timeout=10000,
-                close_button=True
-            )
-            
-            self._emit_log(f"[ALERT] VERTICAL SEPARATION: {drone1}={alt1:.1f}m, {drone2}={alt2:.1f}m, sep={separation:.1f}m")
+        """Handle vertical separation alert from mission controller.
         
-        # Schedule in UI thread
-        try:
-            ui.timer(0.1, lambda: asyncio.create_task(show_alert()), once=True)
-        except Exception as e:
-            self._emit_log(f"[ERROR] Failed to show separation alert: {e}")
+        This is called from a background thread, so we queue the alert
+        for processing in the UI thread.
+        """
+        # Queue the alert for processing in UI thread (thread-safe)
+        self._vertical_separation_alerts.append({
+            'drone1': drone1,
+            'drone2': drone2,
+            'separation': separation,
+            'alt1': alt1,
+            'alt2': alt2
+        })
+    
+    def _on_vertical_separation_countdown_start(self):
+        """Handle countdown start - play 20_seconds.mp3.
+        
+        This is called from a background thread, so we queue it for the UI thread.
+        """
+        self._emit_log("[DEBUG] _on_vertical_separation_countdown_start called!")
+        self._vertical_separation_countdown_active = True
+        self._notification_queue.append({
+            'message': '⏱️ 20-SECOND COUNTDOWN STARTED!\nRTH will trigger if vertical separation not restored.',
+            'type': 'warning',
+            'timeout': 20000
+        })
+        # Queue the audio playback
+        self._vertical_separation_alerts.append({
+            'action': 'countdown_start'
+        })
+    
+    def _on_vertical_separation_countdown_cancel(self):
+        """Handle countdown cancel - play vertical_separation_respected.mp3.
+        
+        This is called from a background thread, so we queue it for the UI thread.
+        """
+        self._emit_log("[DEBUG] _on_vertical_separation_countdown_cancel called!")
+        self._vertical_separation_countdown_active = False
+        self._notification_queue.append({
+            'message': '✅ Vertical separation restored!\nCountdown cancelled, mission continues.',
+            'type': 'positive',
+            'timeout': 5000
+        })
+        # Queue the audio playback
+        self._vertical_separation_alerts.append({
+            'action': 'countdown_cancel'
+        })
     
     def _get_drone_flight_mode(self, namespace: str) -> str:
         """Get drone's current flight mode for manual flight detection."""
@@ -590,11 +627,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Check if drone was auto-added to relay
                 if self.mission_controller.is_drone_in_mission(ns):
                     position = len(self.mission_controller.drone_order)
-                    ui.notify(
-                        f'{ns} auto-added to relay queue (position {position})',
-                        type='positive',
-                        timeout=5000
-                    )
+                    # Queue notification for UI thread (thread-safe)
+                    self._notification_queue.append({
+                        'message': f'{ns} auto-added to relay queue (position {position})',
+                        'type': 'positive',
+                        'timeout': 5000
+                    })
                     self._emit_log(f"[RELAY] {ns} auto-joined relay mission")
         return result
     
@@ -1111,6 +1149,20 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._should_start_timer = False
             self._start_mission_timer()
         
+        # Process vertical separation alerts (these need UI context)
+        while self._vertical_separation_alerts:
+            alert = self._vertical_separation_alerts.pop(0)
+            self._show_vertical_separation_alert(alert)
+        
+        # Process queued notifications (from background threads)
+        while self._notification_queue:
+            notif = self._notification_queue.pop(0)
+            ui.notify(
+                notif.get('message', ''),
+                type=notif.get('type', 'info'),
+                timeout=notif.get('timeout', 3000)
+            )
+        
         if not self.event_log or not self.log_message_queue:
             return
         
@@ -1123,6 +1175,72 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Scroll to bottom
         if self.event_scroll:
             self.event_scroll.scroll_to(percent=1.0)
+    
+    def _show_vertical_separation_alert(self, alert: dict):
+        """Show vertical separation alert in UI thread.
+        
+        Can handle different alert types:
+        - Regular alert: drone1, drone2, separation, alt1, alt2
+        - Countdown start: action='countdown_start'
+        - Countdown cancel: action='countdown_cancel'
+        """
+        action = alert.get('action')
+        
+        if action == 'countdown_start':
+            # Play 20-second countdown audio
+            ui.run_javascript('''
+                // Stop any existing countdown audio first
+                if (window.countdownAudio) {
+                    window.countdownAudio.pause();
+                    window.countdownAudio.currentTime = 0;
+                }
+                window.countdownAudio = new Audio("/static/20_seconds.mp3");
+                window.countdownAudio.play().catch(function(e) { console.log("Countdown audio play failed:", e); });
+            ''')
+            self._emit_log(f"[ALERT] ⏱️ 20-SECOND COUNTDOWN STARTED - RTH will trigger if separation not restored!")
+            return
+        
+        elif action == 'countdown_cancel':
+            # Stop countdown audio and play "respected" sound
+            ui.run_javascript('''
+                // Stop countdown audio
+                if (window.countdownAudio) {
+                    window.countdownAudio.pause();
+                    window.countdownAudio.currentTime = 0;
+                    window.countdownAudio = null;
+                }
+                // Play separation respected sound
+                var audio = new Audio("/static/vertical_separation_respected.mp3");
+                audio.play().catch(function(e) { console.log("Respected audio play failed:", e); });
+            ''')
+            self._emit_log(f"[ALERT] ✅ VERTICAL SEPARATION RESTORED - Countdown cancelled!")
+            return
+        
+        # Regular vertical separation alert
+        drone1 = alert.get('drone1', 'unknown')
+        drone2 = alert.get('drone2', 'unknown')
+        separation = alert.get('separation', 0)
+        alt1 = alert.get('alt1', 0)
+        alt2 = alert.get('alt2', 0)
+        
+        # Play warning sound (not the countdown)
+        ui.run_javascript('''
+            var audio = new Audio("/static/vertical_separation.mp3");
+            audio.play().catch(function(e) { console.log("Audio play failed:", e); });
+        ''')
+        
+        # Show critical notification
+        ui.notify(
+            f'⚠️ CRITICAL: Vertical separation alert!\n'
+            f'{drone1} ({alt1:.1f}m) and {drone2} ({alt2:.1f}m)\n'
+            f'Separation: {separation:.1f}m (min 5m required)',
+            type='negative',
+            position='top',
+            timeout=10000,
+            close_button=True
+        )
+        
+        self._emit_log(f"[ALERT] VERTICAL SEPARATION: {drone1}={alt1:.1f}m, {drone2}={alt2:.1f}m, sep={separation:.1f}m")
 
     def _build_state_machine_display(self):
         """Build the state machine visualization."""
@@ -1132,20 +1250,54 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.state_machine_container.clear()
         self.state_machine_labels.clear()
         
-        # Define the state flow with shorter labels
-        states = [
-            ('IDLE', 'hourglass_empty', 'Idle'),
-            ('SETTING_RTH_ALTITUDE', 'height', 'RTH'),
-            ('TAKING_OFF', 'flight_takeoff', 'T/O'),
-            ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climb'),
-            ('TRANSIT_TO_MONITORING', 'flight', 'Transit'),
-            ('APPROACHING_POINT', 'gps_fixed', 'Appr'),
-            ('MONITORING', 'videocam', 'Mon'),
-            ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),
-            ('CAMERA_SYNC', '360', 'Sync'),
-            ('RETURNING_HOME', 'home', 'RTH'),
-            ('COMPLETED', 'check_circle', 'Done'),
-        ]
+        # Show current mission mode indicator
+        from groundstation.mission_controller import MissionMode
+        is_free_flight = (hasattr(self, 'mission_controller') and 
+                          self.mission_controller.mission_mode == MissionMode.FREE_FLIGHT)
+        
+        with self.state_machine_container:
+            # Mission mode badge
+            if is_free_flight:
+                with ui.row().classes('w-full items-center gap-1 mb-1'):
+                    ui.badge('🆓 FREE FLIGHT', color='orange').classes('text-xs')
+                    ui.label('Pilot controls after altitude').classes('text-xs text-gray-500')
+            else:
+                with ui.row().classes('w-full items-center gap-1 mb-1'):
+                    ui.badge('📍 MONITORING', color='blue').classes('text-xs')
+                    ui.label('Auto-navigate to point').classes('text-xs text-gray-500')
+        
+        # Define states based on mission mode
+        if is_free_flight:
+            # Free Flight: first drone goes to pilot control after climb
+            # Relay drones go through transit/approach/sync before pilot control
+            states = [
+                ('IDLE', 'hourglass_empty', 'Idle'),
+                ('SETTING_RTH_ALTITUDE', 'height', 'RTH'),
+                ('TAKING_OFF', 'flight_takeoff', 'T/O'),
+                ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climb'),
+                ('TRANSIT_TO_MONITORING', 'flight', 'Relay'),  # Relay drone flying to current drone
+                ('APPROACHING_POINT', 'gps_fixed', 'Appr'),    # Approaching for handoff
+                ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),   # First drone waiting for relay
+                ('CAMERA_SYNC', '360', 'Sync'),                # Camera sync before handoff
+                ('MONITORING', 'sports_esports', 'Pilot'),     # Pilot control state
+                ('RETURNING_HOME', 'home', 'RTH'),
+                ('COMPLETED', 'check_circle', 'Done'),
+            ]
+        else:
+            # Monitoring Point: full automated flow
+            states = [
+                ('IDLE', 'hourglass_empty', 'Idle'),
+                ('SETTING_RTH_ALTITUDE', 'height', 'RTH'),
+                ('TAKING_OFF', 'flight_takeoff', 'T/O'),
+                ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climb'),
+                ('TRANSIT_TO_MONITORING', 'flight', 'Transit'),
+                ('APPROACHING_POINT', 'gps_fixed', 'Appr'),
+                ('MONITORING', 'videocam', 'Mon'),
+                ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),
+                ('CAMERA_SYNC', '360', 'Sync'),
+                ('RETURNING_HOME', 'home', 'RTH'),
+                ('COMPLETED', 'check_circle', 'Done'),
+            ]
         
         with self.state_machine_container:
             # Ultra-compact state legend - icons only in a single row
@@ -1292,11 +1444,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                             validation={'Invalid IP': lambda v: self._validate_ip(v)}
                         ).classes('w-full')
                     
-                    with ui.column().style('width: 100px'):
-                        self.namespace_input = ui.input(
-                            label='Name',
-                            placeholder='drone_1'
-                        ).classes('w-full')
+                    with ui.column().style('width: 140px'):
+                        with ui.row().classes('items-end gap-1'):
+                            self.namespace_input = ui.input(
+                                label='Name',
+                                placeholder='drone_1',
+                                value=self._get_next_drone_name()
+                            ).classes('w-full').style('flex: 1;')
+                            ui.button(icon='add', on_click=self._increment_drone_name).props('flat dense size=sm').tooltip('Next drone name')
                 
                 with ui.row().classes('w-full gap-2 mt-2'):
                     ui.button('Connect', icon='link', on_click=self._connect_drone_ui).props('color=primary')
@@ -1707,7 +1862,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 ui.button(icon='warning', on_click=lambda ns=namespace: self.send_abort_mission(ns)).props('flat color=negative').tooltip('Abort Mission')
                 ui.button(icon='videocam', on_click=lambda ns=namespace: self.send_start_recording(ns)).props('flat color=red').tooltip('Start Recording')
                 ui.button(icon='stop', on_click=lambda ns=namespace: self.send_stop_recording(ns)).props('flat').tooltip('Stop Recording')
-                ui.button(icon='my_location', on_click=lambda ns=namespace: self.set_monitoring_point_from_drone(ns)).props('flat').tooltip('Use as monitoring point')
                 ui.button(icon='push_pin', on_click=lambda ns=namespace: self._pin_drone_location(ns)).props('flat color=purple').tooltip('📍 Pin current location (Free Flight → Monitoring Point)')
                 self.drone_buttons[namespace]['ready'] = ui.button(icon='check_circle', on_click=lambda ns=namespace: self._mark_drone_ready(ns)).props('flat color=green').tooltip('Mark as Ready (battery swapped)')
                 ui.button(icon='link_off', on_click=lambda ns=namespace: self._disconnect_drone_ui(ns)).props('flat color=negative').tooltip('Disconnect')
@@ -1732,6 +1886,36 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     # ========================================================================
     # UI EVENT HANDLERS
     # ========================================================================
+    
+    def _get_next_drone_name(self) -> str:
+        """Get the next suggested drone name based on existing drones."""
+        # Find the highest drone number currently in use
+        max_num = 0
+        for ns in self.drones.keys():
+            # Try to extract number from drone_X format
+            if ns.startswith('drone_'):
+                try:
+                    num = int(ns.replace('drone_', ''))
+                    max_num = max(max_num, num)
+                except ValueError:
+                    pass
+        return f'drone_{max_num + 1}'
+    
+    def _increment_drone_name(self):
+        """Increment the drone name in the input field."""
+        current = self.namespace_input.value.strip() if self.namespace_input.value else ''
+        
+        # Try to extract and increment the number
+        if current.startswith('drone_'):
+            try:
+                num = int(current.replace('drone_', ''))
+                self.namespace_input.value = f'drone_{num + 1}'
+                return
+            except ValueError:
+                pass
+        
+        # If current value doesn't match pattern, use next available
+        self.namespace_input.value = self._get_next_drone_name()
     
     def _validate_ip(self, value: str) -> bool:
         """Validate IP address format. Returns True if valid."""
@@ -1765,7 +1949,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if self.connect_drone(ip, namespace):
             ui.notify(f'Drone connected at {ip}', type='positive')
             self.ip_input.value = ''
-            self.namespace_input.value = ''
+            # Auto-suggest next drone name
+            self.namespace_input.value = self._get_next_drone_name()
         else:
             ui.notify('Failed to connect drone', type='negative')
     
@@ -1844,9 +2029,28 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         trajectory = self.drone_trajectories[namespace]
         
-        # Only add point if it's different from the last one (avoid duplicates)
-        if not trajectory or (trajectory[-1][0] != lat or trajectory[-1][1] != lon):
+        # Only add point if it's far enough from the last one (at least 2 meters)
+        # This reduces lag by limiting the number of points
+        MIN_DISTANCE_METERS = 2.0
+        MAX_POINTS = 500  # Limit total trajectory points
+        
+        should_add = False
+        if not trajectory:
+            should_add = True
+        else:
+            last_lat, last_lon = trajectory[-1]
+            # Quick distance check (approximate, good enough for filtering)
+            lat_diff = abs(lat - last_lat) * 111320  # meters per degree lat
+            lon_diff = abs(lon - last_lon) * 111320 * abs(math.cos(math.radians(lat)))
+            distance = math.sqrt(lat_diff**2 + lon_diff**2)
+            should_add = distance >= MIN_DISTANCE_METERS
+        
+        if should_add:
             trajectory.append((lat, lon))
+            
+            # Trim old points if too many
+            if len(trajectory) > MAX_POINTS:
+                trajectory[:] = trajectory[-MAX_POINTS:]
             
             # Update polyline on map (need at least 2 points)
             if len(trajectory) >= 2 and self.map:
@@ -2065,17 +2269,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         drone_ns = list(self.drones.keys())[0]
         
-        # Show takeoff confirmation dialog
-        async def confirm_and_start():
-            self._pending_takeoff_drone = drone_ns
-            confirmed = await self._show_takeoff_confirmation_dialog(drone_ns)
-            if not confirmed:
-                ui.notify('Mission cancelled', type='warning')
-                return
-            
-            self._do_start_single_mission(drone_ns)
-        
-        asyncio.create_task(confirm_and_start())
+        # Show takeoff confirmation dialog using run_javascript to stay in UI context
+        self._pending_takeoff_drone = drone_ns
+        self._pending_single_mission = True
+        self._show_takeoff_dialog_sync(drone_ns)
     
     def _do_start_single_mission(self, drone_ns: str):
         """Actually start the single mission after confirmation."""
@@ -2117,8 +2314,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _start_relay_mission(self):
         """Start a relay mission with all connected drones."""
-        if not self.monitoring_point.is_set:
-            ui.notify('Please set a monitoring point first', type='warning')
+        from groundstation.mission_controller import MissionMode
+        
+        # Check if monitoring point is required (not in Free Flight mode)
+        is_free_flight = (hasattr(self, 'mission_controller') and 
+                          self.mission_controller.mission_mode == MissionMode.FREE_FLIGHT)
+        
+        if not self.monitoring_point.is_set and not is_free_flight:
+            ui.notify('Please set a monitoring point first (or use Free Flight mode)', type='warning')
             return
         
         if len(self.drones) < 1:
@@ -2151,17 +2354,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         drone_list = list(self.drones.keys())
         first_drone = drone_list[0]
         
-        # Show takeoff confirmation dialog for the first drone
-        async def confirm_and_start():
-            self._pending_takeoff_drone = first_drone
-            confirmed = await self._show_takeoff_confirmation_dialog(first_drone)
-            if not confirmed:
-                ui.notify('Relay mission cancelled', type='warning')
-                return
-            
-            self._do_start_relay_mission(drone_list, travel_time, distance)
-        
-        asyncio.create_task(confirm_and_start())
+        # Store pending relay mission data and show confirmation dialog
+        self._pending_takeoff_drone = first_drone
+        self._pending_relay_mission = True
+        self._pending_relay_data = {'drone_list': drone_list, 'travel_time': travel_time, 'distance': distance}
+        self._show_takeoff_dialog_sync(first_drone)
     
     def _do_start_relay_mission(self, drone_list: list, travel_time: float, distance: float):
         """Actually start the relay mission after confirmation."""
@@ -2219,6 +2416,46 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify('Swap already in progress', type='warning')
             return
         
+        # Get the next drone to take off
+        next_drone = self.mission_controller.get_next_drone()
+        if not next_drone:
+            ui.notify('No next drone available for swap', type='warning')
+            return
+        
+        # Show takeoff confirmation dialog
+        self._show_force_swap_dialog(next_drone)
+    
+    def _show_force_swap_dialog(self, drone_name: str):
+        """Show takeoff confirmation dialog for force swap."""
+        with ui.dialog() as dialog, ui.card().classes('p-4'):
+            ui.label(f'🚁 Force Swap - Takeoff Confirmation').classes('text-xl font-bold text-orange-700')
+            ui.separator()
+            ui.label(f'Drone "{drone_name}" will take off for relay swap.').classes('text-lg mt-2')
+            ui.label('This will immediately launch the next drone in sequence.').classes('text-sm text-gray-600 mt-1')
+            
+            def on_confirm():
+                dialog.close()
+                # Play takeoff confirmation sound
+                ui.run_javascript('''
+                    var audio = new Audio("/static/take_off.mp3");
+                    audio.play().catch(function(e) { console.log("Audio play failed:", e); });
+                ''')
+                # Execute the force swap
+                self._do_force_swap()
+            
+            def on_cancel():
+                dialog.close()
+                ui.notify('Force swap cancelled', type='info')
+                self._emit_log("[SWAP] Force swap cancelled by user")
+            
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=on_cancel, color='red').props('flat')
+                ui.button('Confirm Takeoff', on_click=on_confirm, color='primary')
+        
+        dialog.open()
+    
+    def _do_force_swap(self):
+        """Execute the force swap after confirmation."""
         # Try to force the swap
         success, message = self.mission_controller.force_relay_swap()
         
@@ -2359,6 +2596,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Update mission controller's mode
         if hasattr(self, 'mission_controller'):
             self.mission_controller.mission_mode = mode
+        
+        # Update state machine display to show new mode
+        self._build_state_machine_display()
         
         ui.notify(f'{mode_name}: {mode_desc}', type='info')
         self._emit_log(f"[CONFIG] Mission mode set to {mode_name}")
@@ -2797,6 +3037,66 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             await asyncio.sleep(0.1)
         
         return result['confirmed']
+    
+    def _show_takeoff_dialog_sync(self, drone_name: str):
+        """Show takeoff confirmation dialog synchronously (non-async version)."""
+        with ui.dialog() as dialog, ui.card().classes('p-4'):
+            ui.label(f'🚁 Takeoff Confirmation').classes('text-xl font-bold text-blue-700')
+            ui.separator()
+            ui.label(f'Drone "{drone_name}" will take off.').classes('text-lg mt-2')
+            ui.label('Confirm to proceed with takeoff.').classes('text-sm text-gray-600 mt-1')
+            
+            def on_confirm():
+                dialog.close()
+                # Play takeoff confirmation sound
+                ui.run_javascript('''
+                    var audio = new Audio("/static/take_off.mp3");
+                    audio.play().catch(function(e) { console.log("Audio play failed:", e); });
+                ''')
+                # Start the appropriate mission
+                if self._pending_single_mission:
+                    self._pending_single_mission = False
+                    self._do_start_single_mission(self._pending_takeoff_drone)
+                elif self._pending_relay_mission:
+                    self._pending_relay_mission = False
+                    data = self._pending_relay_data
+                    self._do_start_relay_mission(data['drone_list'], data['travel_time'], data['distance'])
+            
+            def on_cancel():
+                dialog.close()
+                self._show_abort_dialog_sync()
+            
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=on_cancel, color='red').props('flat')
+                ui.button('Confirm', on_click=on_confirm, color='primary')
+        
+        dialog.open()
+    
+    def _show_abort_dialog_sync(self):
+        """Show abort confirmation dialog synchronously."""
+        with ui.dialog() as dialog, ui.card().classes('p-4'):
+            ui.label('⚠️ Abort Mission?').classes('text-xl font-bold text-red-700')
+            ui.separator()
+            ui.label('Are you sure you want to abort the mission?').classes('text-lg mt-2')
+            ui.label('The relay system will stop. Airborne drones will continue unaffected.').classes('text-sm text-gray-600 mt-1')
+            
+            def on_confirm_abort():
+                dialog.close()
+                self._pending_single_mission = False
+                self._pending_relay_mission = False
+                ui.notify('Mission cancelled', type='warning')
+                self._emit_log("[MISSION] User aborted mission from takeoff confirmation")
+            
+            def on_cancel_abort():
+                dialog.close()
+                # Re-show the takeoff dialog
+                self._show_takeoff_dialog_sync(self._pending_takeoff_drone)
+            
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=on_cancel_abort).props('flat')
+                ui.button('Confirm Abort', on_click=on_confirm_abort, color='red')
+        
+        dialog.open()
     
     def _handle_takeoff_confirm(self, dialog, result):
         """Handle confirm button click in takeoff dialog."""
