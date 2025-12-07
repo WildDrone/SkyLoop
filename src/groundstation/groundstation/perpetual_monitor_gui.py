@@ -165,6 +165,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Notification queue (for thread-safe UI notifications from background threads)
         self._notification_queue: list = []
         
+        # Takeoff confirmation queue (for thread-safe dialog from background threads)
+        self._takeoff_confirmation_queue: list = []
+        self._takeoff_confirmation_dialog_open = False
+        
         # Monitoring point marker
         self.monitoring_marker = None
         self.monitoring_circle = None
@@ -173,7 +177,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.mission_status_label = None
         self.countdown_label = None
         self.countdown_progress = None
-        self.countdown_container = None  # Container for countdown (hidden during manual swap)
+        self.countdown_container = Nonex  # Container for countdown (hidden during manual swap)
         self.force_swap_button = None  # Button to trigger manual swap
         self.active_drone_label = None
         self.next_drone_label = None
@@ -268,6 +272,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Register vertical separation countdown callbacks
         self.mission_controller.on_vertical_separation_countdown_start = self._on_vertical_separation_countdown_start
         self.mission_controller.on_vertical_separation_countdown_cancel = self._on_vertical_separation_countdown_cancel
+        self.mission_controller.on_vertical_separation_mission_stopped = self._on_vertical_separation_mission_stopped
         
         # Register drone flight mode callback for manual flight detection
         self.mission_controller.get_drone_flight_mode = self._get_drone_flight_mode
@@ -535,20 +540,71 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         })
     
     def _on_takeoff_confirmation_request(self, drone_name: str, callback):
-        """Handle takeoff confirmation request from mission controller (relay auto-launch)."""
-        # This is called from the mission controller thread, so we need to use ui.timer
-        # to trigger the dialog in the UI thread
+        """Handle takeoff confirmation request from mission controller (relay auto-launch).
         
-        async def show_dialog():
-            confirmed = await self._show_takeoff_confirmation_dialog(drone_name)
-            callback(confirmed)
-        
-        # Schedule the dialog to run in the UI thread
+        This is called from the mission controller thread, so we queue the request
+        for processing in the UI thread (similar to other background events).
+        """
+        # Queue the request for the UI thread to process
+        self._takeoff_confirmation_queue.append({
+            'drone_name': drone_name,
+            'callback': callback
+        })
+    
+    def _process_takeoff_confirmation_sync(self, request: dict):
+        """Process a takeoff confirmation request in the UI thread (sync version)."""
         try:
-            ui.timer(0.1, lambda: asyncio.create_task(show_dialog()), once=True)
+            drone_name = request['drone_name']
+            callback = request['callback']
+            
+            # Show the confirmation dialog using sync version with callback storage
+            self._relay_takeoff_callback = callback
+            # Use main_row container to ensure proper UI context
+            if hasattr(self, 'main_row') and self.main_row:
+                with self.main_row:
+                    self._show_relay_takeoff_dialog_sync(drone_name)
+            else:
+                self._show_relay_takeoff_dialog_sync(drone_name)
+            # Note: callback will be called from dialog buttons
         except Exception as e:
-            self._emit_log(f"[ERROR] Failed to show confirmation dialog: {e}")
-            callback(False)
+            self._emit_log(f"[ERROR] Failed to process takeoff confirmation: {e}")
+            request['callback'](False)
+            self._takeoff_confirmation_dialog_open = False
+    
+    def _show_relay_takeoff_dialog_sync(self, drone_name: str):
+        """Show relay takeoff confirmation dialog (sync version for background thread requests)."""
+        with ui.dialog() as dialog, ui.card().classes('p-4'):
+            ui.label(f'🚁 Relay Takeoff Confirmation').classes('text-xl font-bold text-blue-700')
+            ui.separator()
+            ui.label(f'Drone "{drone_name}" is ready to relay.').classes('text-lg mt-2')
+            ui.label('Confirm to launch relay drone.').classes('text-sm text-gray-600 mt-1')
+            
+            def on_confirm():
+                dialog.close()
+                self._takeoff_confirmation_dialog_open = False
+                # Play takeoff confirmation sound
+                ui.run_javascript('''
+                    var audio = new Audio("/static/take_off.mp3");
+                    audio.play().catch(function(e) { console.log("Audio play failed:", e); });
+                ''')
+                # Call the mission controller callback
+                if hasattr(self, '_relay_takeoff_callback') and self._relay_takeoff_callback:
+                    self._relay_takeoff_callback(True)
+                    self._relay_takeoff_callback = None
+            
+            def on_cancel():
+                dialog.close()
+                self._takeoff_confirmation_dialog_open = False
+                # Call the mission controller callback with False
+                if hasattr(self, '_relay_takeoff_callback') and self._relay_takeoff_callback:
+                    self._relay_takeoff_callback(False)
+                    self._relay_takeoff_callback = None
+            
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancel', on_click=on_cancel, color='red').props('flat')
+                ui.button('Confirm', on_click=on_confirm, color='primary')
+        
+        dialog.open()
     
     def _on_vertical_separation_alert(self, drone1: str, drone2: str, separation: float, alt1: float, alt2: float):
         """Handle vertical separation alert from mission controller.
@@ -599,6 +655,23 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             'action': 'countdown_cancel'
         })
     
+    def _on_vertical_separation_mission_stopped(self):
+        """Handle mission stopped due to vertical separation countdown expiry.
+        
+        This is called from a background thread, so we queue UI updates.
+        """
+        self._emit_log("[CRITICAL] Mission STOPPED due to vertical separation countdown expiry!")
+        self._vertical_separation_countdown_active = False
+        self._notification_queue.append({
+            'message': '🛑 MISSION STOPPED!\nVertical separation countdown expired.\nAll drones returning home.',
+            'type': 'negative',
+            'timeout': 10000
+        })
+        # Queue the UI state update
+        self._vertical_separation_alerts.append({
+            'action': 'mission_stopped'
+        })
+    
     def _get_drone_flight_mode(self, namespace: str) -> str:
         """Get drone's current flight mode for manual flight detection."""
         if namespace in self.drones:
@@ -608,7 +681,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     def _get_drone_altitude(self, namespace: str) -> float:
         """Get drone's current altitude for vertical separation check."""
         if namespace in self.drones:
-            return self.drones[namespace].altitude or 0.0
+            alt = self.drones[namespace].altitude or 0.0
+            self.get_logger().debug(f"_get_drone_altitude({namespace}): {alt:.1f}m")
+            return alt
+        self.get_logger().warning(f"_get_drone_altitude({namespace}): drone not found!")
         return 0.0
     
     def connect_drone(self, ip_address: str, namespace: str = None) -> bool:
@@ -720,7 +796,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             </style>
         """)
         
-        with ui.row().classes('w-full h-full').style('display: flex; height: 95vh; gap: 10px; padding: 10px;'):
+        with ui.row().classes('w-full h-full').style('display: flex; height: 95vh; gap: 10px; padding: 10px;') as self.main_row:
             # Left panel: Drone management
             self._build_left_panel()
             
@@ -1154,6 +1230,15 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             alert = self._vertical_separation_alerts.pop(0)
             self._show_vertical_separation_alert(alert)
         
+        # Update vertical separation card
+        self._update_vertical_separation_card()
+        
+        # Process takeoff confirmation requests (from background threads)
+        if self._takeoff_confirmation_queue and not self._takeoff_confirmation_dialog_open:
+            request = self._takeoff_confirmation_queue.pop(0)
+            self._takeoff_confirmation_dialog_open = True
+            self._process_takeoff_confirmation_sync(request)
+        
         # Process queued notifications (from background threads)
         while self._notification_queue:
             notif = self._notification_queue.pop(0)
@@ -1216,6 +1301,29 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._emit_log(f"[ALERT] ✅ VERTICAL SEPARATION RESTORED - Countdown cancelled!")
             return
         
+        elif action == 'mission_stopped':
+            # Stop countdown audio and update UI to stopped state
+            ui.run_javascript('''
+                // Stop countdown audio
+                if (window.countdownAudio) {
+                    window.countdownAudio.pause();
+                    window.countdownAudio.currentTime = 0;
+                    window.countdownAudio = null;
+                }
+            ''')
+            # Update UI state same as Stop button
+            self._stop_mission_timer()
+            if self.mission_status_label:
+                self.mission_status_label.text = "STOPPED (Vert.Sep)"
+                self.mission_status_label.style('background: #ffebee; color: #c62828;')
+            if self.countdown_label:
+                self.countdown_label.text = "--:--"
+            if self.active_drone_label:
+                self.active_drone_label.text = "--"
+                self.active_drone_label.style('background: #e0e0e0; color: #424242;')
+            self._emit_log(f"[CRITICAL] 🛑 MISSION STOPPED - Vertical separation countdown expired!")
+            return
+        
         # Regular vertical separation alert
         drone1 = alert.get('drone1', 'unknown')
         drone2 = alert.get('drone2', 'unknown')
@@ -1241,6 +1349,99 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         )
         
         self._emit_log(f"[ALERT] VERTICAL SEPARATION: {drone1}={alt1:.1f}m, {drone2}={alt2:.1f}m, sep={separation:.1f}m")
+
+    def _update_vertical_separation_card(self):
+        """Update the vertical separation information card."""
+        if not hasattr(self, 'vertical_sep_status_badge'):
+            return
+        
+        # Get all airborne drones with their altitudes
+        airborne_drones = []
+        from groundstation.mission_controller import MissionState
+        
+        for ns, mission in self.mission_controller.drone_missions.items():
+            if mission.state not in [MissionState.IDLE, MissionState.ERROR, MissionState.COMPLETED]:
+                altitude = self._get_drone_altitude(ns)
+                airborne_drones.append((ns, altitude, mission.state))
+        
+        # Calculate minimum vertical separation between any pair
+        min_separation = float('inf')
+        violation_pair = None
+        MIN_VERTICAL_SEPARATION = 5.0
+        
+        for i, (ns1, alt1, _) in enumerate(airborne_drones):
+            for ns2, alt2, _ in airborne_drones[i+1:]:
+                sep = abs(alt1 - alt2)
+                if sep < min_separation:
+                    min_separation = sep
+                    violation_pair = (ns1, ns2, alt1, alt2)
+        
+        # Update status badge and current separation
+        if len(airborne_drones) < 2:
+            # Not enough drones to compare
+            self.vertical_sep_status_badge.set_text('N/A')
+            self.vertical_sep_status_badge.props('color=grey')
+            self.vertical_sep_current_label.text = '--'
+            self.vertical_sep_current_label.style('color: #9e9e9e;')
+        elif min_separation < MIN_VERTICAL_SEPARATION:
+            # Violation!
+            self.vertical_sep_status_badge.set_text('⚠️ ALERT')
+            self.vertical_sep_status_badge.props('color=red')
+            self.vertical_sep_current_label.text = f'{min_separation:.1f}m'
+            self.vertical_sep_current_label.style('color: #c62828;')
+        elif min_separation < MIN_VERTICAL_SEPARATION * 2:
+            # Warning (within 10m)
+            self.vertical_sep_status_badge.set_text('CAUTION')
+            self.vertical_sep_status_badge.props('color=orange')
+            self.vertical_sep_current_label.text = f'{min_separation:.1f}m'
+            self.vertical_sep_current_label.style('color: #e65100;')
+        else:
+            # OK
+            self.vertical_sep_status_badge.set_text('OK')
+            self.vertical_sep_status_badge.props('color=green')
+            self.vertical_sep_current_label.text = f'{min_separation:.1f}m' if min_separation != float('inf') else '--'
+            self.vertical_sep_current_label.style('color: #2e7d32;')
+        
+        # Update airborne drones list
+        if hasattr(self, 'vertical_sep_drones_list'):
+            self.vertical_sep_drones_list.clear()
+            with self.vertical_sep_drones_list:
+                if not airborne_drones:
+                    ui.label("No drones airborne").classes('text-xs text-gray-400 italic')
+                else:
+                    for ns, alt, state in sorted(airborne_drones, key=lambda x: x[1], reverse=True):
+                        # Color based on state
+                        color = '#424242'
+                        icon_name = 'flight'
+                        if state in [MissionState.TAKING_OFF, MissionState.CLIMBING_TO_ALTITUDE]:
+                            color = '#1976d2'  # Blue for climbing
+                            icon_name = 'trending_up'
+                        elif state == MissionState.MONITORING:
+                            color = '#2e7d32'  # Green for monitoring
+                            icon_name = 'location_on'
+                        elif state == MissionState.RETURNING_HOME:
+                            color = '#f57c00'  # Orange for RTH
+                            icon_name = 'home'
+                        
+                        with ui.row().classes('items-center gap-1 py-0'):
+                            ui.icon(icon_name, size='xs').style(f'color: {color};')
+                            ui.label(f'{ns}').classes('text-xs font-bold').style(f'color: {color}; min-width: 50px;')
+                            ui.label(f'{alt:.0f}m').classes('text-xs font-mono font-bold').style(f'color: {color};')
+        
+        # Update countdown row visibility and progress
+        if self._vertical_separation_countdown_active and hasattr(self, 'vertical_sep_countdown_row'):
+            self.vertical_sep_countdown_row.style('display: flex;')
+            
+            # Calculate countdown progress
+            import time
+            elapsed = time.time() - self.mission_controller._vertical_separation_countdown_start
+            remaining = max(0, 20.0 - elapsed)
+            progress = elapsed / 20.0
+            
+            self.vertical_sep_countdown_label.text = f'RTH in: {remaining:.0f}s'
+            self.vertical_sep_countdown_progress.value = progress
+        elif hasattr(self, 'vertical_sep_countdown_row'):
+            self.vertical_sep_countdown_row.style('display: none;')
 
     def _build_state_machine_display(self):
         """Build the state machine visualization."""
@@ -1270,16 +1471,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if is_free_flight:
             # Free Flight: first drone goes to pilot control after climb
             # Relay drones go through transit/approach/sync before pilot control
+            # Flow: First drone: IDLE→...→CLIMB→MONITORING→WAITING→RTH
+            #       Relay drone: IDLE→...→CLIMB→TRANSIT→APPROACH→SYNC→MONITORING→RTH
             states = [
                 ('IDLE', 'hourglass_empty', 'Idle'),
                 ('SETTING_RTH_ALTITUDE', 'height', 'RTH'),
                 ('TAKING_OFF', 'flight_takeoff', 'T/O'),
                 ('CLIMBING_TO_ALTITUDE', 'trending_up', 'Climb'),
-                ('TRANSIT_TO_MONITORING', 'flight', 'Relay'),  # Relay drone flying to current drone
-                ('APPROACHING_POINT', 'gps_fixed', 'Appr'),    # Approaching for handoff
-                ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),   # First drone waiting for relay
+                ('MONITORING', 'sports_esports', 'Pilot'),     # First drone: pilot control after climb
+                ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),   # First drone waiting for relay to arrive
+                ('TRANSIT_TO_MONITORING', 'flight', 'Relay'),  # Relay drone flying to first drone
+                ('APPROACHING_POINT', 'gps_fixed', 'Appr'),    # Relay drone approaching for handoff
                 ('CAMERA_SYNC', '360', 'Sync'),                # Camera sync before handoff
-                ('MONITORING', 'sports_esports', 'Pilot'),     # Pilot control state
                 ('RETURNING_HOME', 'home', 'RTH'),
                 ('COMPLETED', 'check_circle', 'Done'),
             ]
@@ -1535,70 +1738,89 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Map click handler
                 self.map.on('map-click', self._on_map_click)
             
-            # Control panels and State Machine - single row with equal height cards
+            # Control panels - reorganized into 2 rows for better space usage
+            # Row 1: Monitoring Point + Trajectory/Speed + Vertical Separation + Mission Buttons
             with ui.row().classes('w-full gap-2 items-stretch mt-2'):
-                # Column 1: Monitoring Point
-                with ui.card().classes('p-3').style('flex: 1; background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%); border-left: 3px solid #e53935;'):
-                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #ffcdd2;'):
-                        ui.icon('place').classes('text-lg').style('color: #e53935;')
-                        ui.label("Monitoring Point").classes('text-sm font-bold')
+                # Card 1: Monitoring Point + Trajectory (merged)
+                with ui.card().classes('p-2').style('flex: 1.4; background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%); border-left: 3px solid #e53935;'):
+                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #ffcdd2;'):
+                        ui.icon('place', size='sm').style('color: #e53935;')
+                        ui.label("Navigation").classes('text-xs font-bold')
                         ui.space()
-                        ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('round dense size=xs color=red').tooltip('Set')
+                        ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('round dense size=xs color=red').tooltip('Set Point')
                         ui.button(icon='delete_outline', on_click=self._clear_monitoring_point_ui).props('round dense flat size=xs').tooltip('Clear')
-                    with ui.grid(columns=2).classes('w-full gap-1 mt-2'):
+                        ui.button(icon='cancel', on_click=self._abort_trajectories).props('round dense flat size=xs color=orange').tooltip('Abort Trajectory')
+                    # Monitoring Point coordinates
+                    with ui.grid(columns=4).classes('w-full gap-1 mt-1'):
                         self.lat_input = ui.input(label='Lat', value='0.0').props('dense outlined').classes('w-full')
                         self.lon_input = ui.input(label='Lon', value='0.0').props('dense outlined').classes('w-full')
-                        self.alt_input = ui.input(label='Alt (m)', value='50').props('dense outlined').classes('w-full')
-                        self.heading_input = ui.input(label='Hdg (°)', value='0').props('dense outlined').classes('w-full')
-                
-                # Column 2: Trajectory
-                with ui.card().classes('p-3').style('flex: 0.8; background: linear-gradient(135deg, #f3e5f5 0%, #ffffff 100%); border-left: 3px solid #8e24aa;'):
-                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #e1bee7;'):
-                        ui.icon('route').classes('text-lg').style('color: #8e24aa;')
-                        ui.label("Trajectory").classes('text-sm font-bold')
-                        ui.space()
-                        ui.button('Abort', icon='cancel', on_click=self._abort_trajectories).props('dense flat size=xs color=red')
-                    # PID navigation only (DJI Native removed for safety)
-                    ui.label('Navigation: PID').classes('text-xs text-gray-600 mt-2')
+                        self.alt_input = ui.input(label='Alt', value='50').props('dense outlined').classes('w-full')
+                        self.heading_input = ui.input(label='Hdg', value='0').props('dense outlined').classes('w-full')
+                    # Trajectory speed (inline)
                     with ui.row().classes('w-full items-center gap-1 mt-1'):
-                        ui.icon('speed').classes('text-sm').style('color: #8e24aa;')
+                        ui.icon('speed', size='xs').style('color: #8e24aa;')
+                        ui.label('Speed:').classes('text-xs text-gray-600')
                         self.trajectory_speed_slider = ui.slider(
                             min=1, max=12, value=10, step=1,
                             on_change=self._on_trajectory_speed_change
-                        ).props('label-always dense').classes('flex-grow')
+                        ).props('dense').classes('flex-grow')
                         self.trajectory_speed_label = ui.label('10').classes('text-xs font-mono font-bold')
                 
-                # Column 3: Mission Control
-                with ui.card().classes('p-3').style('flex: 1; background: linear-gradient(135deg, #e3f2fd 0%, #ffffff 100%); border-left: 3px solid #1976d2;'):
-                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #bbdefb;'):
-                        ui.icon('flag').classes('text-sm').style('color: #1976d2;')
-                        ui.label("Mission Control").classes('text-sm font-bold')
+                # Card 2: Vertical Separation (compact)
+                with ui.card().classes('p-2').style('flex: 0.7; background: linear-gradient(135deg, #fff8e1 0%, #ffffff 100%); border-left: 3px solid #ff9800;') as self.vertical_sep_card:
+                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #ffe0b2;'):
+                        ui.icon('height', size='sm').style('color: #e65100;')
+                        ui.label("Vert. Sep.").classes('text-xs font-bold')
                         ui.space()
-                        # ROS bag recording toggle
-                        self.rosbag_switch = ui.switch('🤖 Record ROS Bag', value=False, on_change=self._on_rosbag_change).props('dense size=sm').tooltip('Record all ROS topics to bag file')
-                    # Mission mode toggle: Monitoring Point vs Free Flight
+                        self.vertical_sep_enabled_switch = ui.switch(value=True, on_change=self._on_vertical_sep_toggle).props('dense size=xs').tooltip('Enable/Disable vertical separation check')
+                        self.vertical_sep_status_badge = ui.badge('OK', color='green').classes('text-xs')
+                    # Content container (hideable when disabled)
+                    with ui.column().classes('w-full gap-1') as self.vertical_sep_content:
+                        # Current vs Min in one row
+                        with ui.row().classes('w-full items-center justify-around mt-1'):
+                            with ui.row().classes('items-center gap-1'):
+                                self.vertical_sep_current_label = ui.label('--').classes('text-lg font-bold').style('color: #424242;')
+                            ui.icon('compare_arrows', size='sm').style('color: #bdbdbd;')
+                            ui.label('5m').classes('text-lg font-bold').style('color: #2e7d32;')
+                        # Drones list (no scroll, all visible)
+                        self.vertical_sep_drones_list = ui.column().classes('w-full gap-0 mt-1')
+                        # Countdown (hidden)
+                        with ui.row().classes('w-full items-center gap-1 p-1 rounded').style('background: #ffebee; border: 1px solid #ef5350; display: none;') as self.vertical_sep_countdown_row:
+                            ui.icon('warning', size='xs').style('color: #c62828;')
+                            self.vertical_sep_countdown_label = ui.label('RTH: --s').classes('text-xs font-bold').style('color: #c62828;')
+                            self.vertical_sep_countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=red size=xs').classes('flex-1')
+                    # Disabled message (hidden by default)
+                    self.vertical_sep_disabled_msg = ui.label('Check disabled').classes('w-full text-center text-sm mt-2').style('color: #9e9e9e; display: none;')
+                
+                # Card 3: Mission Control (compact)
+                with ui.card().classes('p-2').style('flex: 1.3; background: linear-gradient(135deg, #e3f2fd 0%, #ffffff 100%); border-left: 3px solid #1976d2;'):
+                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #bbdefb;'):
+                        ui.icon('flag', size='sm').style('color: #1976d2;')
+                        ui.label("Mission").classes('text-xs font-bold')
+                        ui.space()
+                        self.rosbag_switch = ui.switch('🤖 ROS', value=False, on_change=self._on_rosbag_change).props('dense size=xs').tooltip('Record ROS Bag')
+                    # Mode toggle + params in compact grid
                     self.mission_mode_toggle = ui.toggle(
-                        {1: '📍 Monitor', 2: '🆓 Free Flight'}, 
+                        {1: '📍 Monitor', 2: '🆓 Free'}, 
                         value=1,
                         on_change=self._on_mission_mode_change
-                    ).props('dense spread no-caps size=sm').classes('w-full mt-2').tooltip(
-                        'Monitor: Drone flies to point and hovers. Free Flight: Pilot controls after reaching altitude.')
-                    with ui.grid(columns=2).classes('w-full gap-1 mt-2'):
-                        self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').classes('w-full')
-                        self.safety_buffer_input = ui.input(label='Buffer (s)', value='60').props('dense outlined').classes('w-full')
-                        self.min_battery_input = ui.input(label='Min Bat %', value='30').props('dense outlined').classes('w-full')
-                        self.min_satellites_input = ui.input(label='Min Sats', value='8').props('dense outlined').classes('w-full')
-                    with ui.row().classes('w-full gap-1 mt-2'):
-                        ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=sm').style('flex: 1;')
-                        ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=sm').style('flex: 1;')
-                        ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=sm').style('flex: 1;')
+                    ).props('dense spread no-caps size=xs').classes('w-full mt-1')
+                    with ui.grid(columns=4).classes('w-full gap-1 mt-1'):
+                        self.rth_alt_input = ui.input(label='RTH', value='50').props('dense outlined').classes('w-full')
+                        self.safety_buffer_input = ui.input(label='Buf', value='60').props('dense outlined').classes('w-full')
+                        self.min_battery_input = ui.input(label='Bat%', value='30').props('dense outlined').classes('w-full')
+                        self.min_satellites_input = ui.input(label='Sats', value='8').props('dense outlined').classes('w-full')
+                    with ui.row().classes('w-full gap-1 mt-1'):
+                        ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=xs').style('flex: 1;')
+                        ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=xs').style('flex: 1;')
+                        ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=xs').style('flex: 1;')
                 
-                # Column 4: State Machine (always visible)
-                with ui.card().classes('p-3').style('flex: 1.2; background: linear-gradient(135deg, #e8f5e9 0%, #ffffff 100%); border-left: 3px solid #43a047;'):
-                    with ui.row().classes('items-center gap-2 pb-2').style('border-bottom: 1px solid #c8e6c9;'):
-                        ui.icon('account_tree').classes('text-lg').style('color: #43a047;')
-                        ui.label("State Machine").classes('text-sm font-bold')
-                    self.state_machine_container = ui.column().classes('w-full gap-1 mt-2')
+                # Card 4: State Machine (compact)
+                with ui.card().classes('p-2').style('flex: 1.5; background: linear-gradient(135deg, #e8f5e9 0%, #ffffff 100%); border-left: 3px solid #43a047;'):
+                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #c8e6c9;'):
+                        ui.icon('account_tree', size='sm').style('color: #43a047;')
+                        ui.label("State Machine").classes('text-xs font-bold')
+                    self.state_machine_container = ui.column().classes('w-full gap-0 mt-1')
                     with self.state_machine_container:
                         self._build_state_machine_display()
             
@@ -2259,8 +2481,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _start_single_mission(self):
         """Start a single drone monitoring mission."""
-        if not self.monitoring_point.is_set:
-            ui.notify('Please set a monitoring point first', type='warning')
+        from groundstation.mission_controller import MissionMode
+        
+        # Check if monitoring point is required (not in Free Flight mode)
+        is_free_flight = (hasattr(self, 'mission_controller') and 
+                          self.mission_controller.mission_mode == MissionMode.FREE_FLIGHT)
+        
+        if not self.monitoring_point.is_set and not is_free_flight:
+            ui.notify('Please set a monitoring point first (or use Free Flight mode)', type='warning')
             return
         
         if not self.drones:
@@ -2328,28 +2556,36 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify('No drones connected', type='warning')
             return
         
-        # Check if point is reachable
-        result = self.mission_controller.calculate_drones_needed()
-        simultaneous, total, travel_time, distance, has_actual_data = result
-        connected = len(self.drones)
-        
-        if simultaneous == float('inf'):
-            ui.notify(f'Point too far! ({distance/1000:.1f}km) - cannot maintain coverage', type='negative')
-            return
-        
-        # Info message about drone requirements (non-blocking)
-        if connected < simultaneous:
-            ui.notify(
-                f'Need {simultaneous} drones flying simultaneously. Connect more drones soon!',
-                type='warning',
-                timeout=5000
-            )
-        elif connected < total:
-            ui.notify(
-                f'Starting with {connected} drones. {total} recommended for full rotation.',
-                type='info',
-                timeout=3000
-            )
+        # Check if point is reachable (skip in Free Flight mode)
+        if not is_free_flight:
+            result = self.mission_controller.calculate_drones_needed()
+            simultaneous, total, travel_time, distance, has_actual_data = result
+            connected = len(self.drones)
+            
+            if simultaneous == float('inf'):
+                ui.notify(f'Point too far! ({distance/1000:.1f}km) - cannot maintain coverage', type='negative')
+                return
+            
+            # Info message about drone requirements (non-blocking)
+            if connected < simultaneous:
+                ui.notify(
+                    f'Need {simultaneous} drones flying simultaneously. Connect more drones soon!',
+                    type='warning',
+                    timeout=5000
+                )
+            elif connected < total:
+                ui.notify(
+                    f'Starting with {connected} drones. {total} recommended for full rotation.',
+                    type='info',
+                    timeout=3000
+                )
+            
+            travel_time_val = travel_time
+            distance_val = distance
+        else:
+            # Free Flight mode - no distance calculation needed
+            travel_time_val = 0
+            distance_val = 0
         
         drone_list = list(self.drones.keys())
         first_drone = drone_list[0]
@@ -2357,7 +2593,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Store pending relay mission data and show confirmation dialog
         self._pending_takeoff_drone = first_drone
         self._pending_relay_mission = True
-        self._pending_relay_data = {'drone_list': drone_list, 'travel_time': travel_time, 'distance': distance}
+        self._pending_relay_data = {'drone_list': drone_list, 'travel_time': travel_time_val, 'distance': distance_val}
         self._show_takeoff_dialog_sync(first_drone)
     
     def _do_start_relay_mission(self, drone_list: list, travel_time: float, distance: float):
@@ -2557,6 +2793,28 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 except Exception as ex:
                     ui.notify(f'Error stopping recording: {ex}', type='warning')
                     self._emit_log(f"[ROSBAG] Error stopping: {ex}")
+    
+    def _on_vertical_sep_toggle(self, e):
+        """Handle vertical separation check toggle change."""
+        enabled = e.value
+        self.mission_controller.vertical_separation_enabled = enabled
+        
+        if enabled:
+            ui.notify('✅ Vertical separation check enabled', type='positive')
+            self._emit_log("[SAFETY] Vertical separation check ENABLED")
+            self.vertical_sep_status_badge.set_text('OK')
+            self.vertical_sep_status_badge.props('color=green')
+            # Show content, hide disabled message
+            self.vertical_sep_content.style('display: block;')
+            self.vertical_sep_disabled_msg.style('display: none;')
+        else:
+            ui.notify('⚠️ Vertical separation check disabled', type='warning')
+            self._emit_log("[SAFETY] Vertical separation check DISABLED - manual monitoring required!")
+            self.vertical_sep_status_badge.set_text('OFF')
+            self.vertical_sep_status_badge.props('color=grey')
+            # Hide content, show disabled message
+            self.vertical_sep_content.style('display: none;')
+            self.vertical_sep_disabled_msg.style('display: block;')
     
     def _on_trajectory_mode_change(self, e):
         """Handle trajectory mode toggle change (deprecated - PID only now)."""

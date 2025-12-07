@@ -215,6 +215,7 @@ class MissionController:
         self._trajectory_update_interval: float = 10.0  # seconds
         
         # Vertical separation safety
+        self._vertical_separation_enabled: bool = True  # Toggle to enable/disable vertical separation check
         self._vertical_separation_warning_active: bool = False
         self._vertical_separation_aborted_drone: str = ""
         self._last_vertical_separation_check: float = 0.0
@@ -224,6 +225,7 @@ class MissionController:
         self._vertical_separation_countdown_start: float = 0.0
         self._vertical_separation_countdown_duration: float = 20.0  # seconds
         self._vertical_separation_violating_drones: tuple = ()  # (drone1, drone2)
+        self._vertical_separation_mission_stopped: bool = False  # Prevent countdown restart after stop
         
         # Callbacks for drone commands (set by ROS node)
         self._cmd_takeoff: Optional[Callable[[str], None]] = None
@@ -263,6 +265,7 @@ class MissionController:
         self.on_vertical_separation_alert: Optional[Callable[[str, str, float, float, float], None]] = None  # drone1, drone2, separation, alt1, alt2
         self.on_vertical_separation_countdown_start: Optional[Callable[[], None]] = None  # Start 20s countdown audio
         self.on_vertical_separation_countdown_cancel: Optional[Callable[[], None]] = None  # Cancel countdown, play respected sound
+        self.on_vertical_separation_mission_stopped: Optional[Callable[[], None]] = None  # Mission stopped due to countdown expiry
         
         # Takeoff confirmation tracking for relay auto-launch
         self._takeoff_confirmation_pending: bool = False
@@ -280,6 +283,28 @@ class MissionController:
         self._mission_thread: Optional[threading.Thread] = None
         self._running = False
         self._update_interval = 0.5  # seconds
+    
+    # ========================================================================
+    # VERTICAL SEPARATION TOGGLE
+    # ========================================================================
+    
+    @property
+    def vertical_separation_enabled(self) -> bool:
+        """Check if vertical separation check is enabled."""
+        return self._vertical_separation_enabled
+    
+    @vertical_separation_enabled.setter
+    def vertical_separation_enabled(self, value: bool):
+        """Enable or disable vertical separation check."""
+        self._vertical_separation_enabled = value
+        if not value:
+            # Cancel any active countdown when disabling
+            if self._vertical_separation_countdown_active:
+                self._vertical_separation_countdown_active = False
+                self._vertical_separation_violating_drones = ()
+                if self.on_vertical_separation_countdown_cancel:
+                    self.on_vertical_separation_countdown_cancel()
+        logger.info(f"Vertical separation check {'enabled' if value else 'disabled'}")
     
     # ========================================================================
     # DEBUG MODE - Command wrappers with logging
@@ -775,6 +800,9 @@ class MissionController:
         self.config.monitoring_alt = monitoring_alt
         self.config.base_rth_altitude = rth_altitude
         
+        # Reset vertical separation mission stopped flag for new mission
+        self._vertical_separation_mission_stopped = False
+        
         # Create drone mission status
         mission = DroneMissionStatus(
             namespace=namespace,
@@ -834,6 +862,9 @@ class MissionController:
         self.config.monitoring_lon = monitoring_lon
         self.config.monitoring_alt = monitoring_alt
         self.config.base_rth_altitude = base_rth_altitude
+        
+        # Reset vertical separation mission stopped flag for new mission
+        self._vertical_separation_mission_stopped = False
         
         # Initialize all drones
         self.drone_order = drone_list.copy()
@@ -1806,10 +1837,21 @@ class MissionController:
         
         remaining = self.get_remaining_flight_time(current_ns)
         
+        # Don't process relay logic if remaining flight time is not yet available (0 or very low)
+        # This prevents premature relay triggering when DJI data hasn't arrived yet
+        if remaining < 60:  # Less than 1 minute means data likely not ready
+            return
+        
         # Calculate when next drone should launch
         avg_travel = self.get_average_travel_time()
         if avg_travel == 0:
             avg_travel = current_mission.estimated_travel_time
+        
+        # In Free Flight mode, the first drone doesn't transit, so estimated_travel_time is 0
+        # Use a minimum travel time estimate (climb + transit) for relay timing
+        if avg_travel == 0 and self.mission_mode == MissionMode.FREE_FLIGHT:
+            # Minimum estimate: ~60s climb + ~60s transit = 120s (conservative)
+            avg_travel = 120.0
         
         countdown = remaining - avg_travel - self.config.safety_buffer_seconds
 
@@ -1828,8 +1870,8 @@ class MissionController:
         if self.on_relay_countdown:
             self.on_relay_countdown(countdown, next_ns, timing_breakdown)
         
-        # Show takeoff confirmation dialog 30 seconds before launch
-        if countdown <= 30 and countdown > 0:
+        # Show takeoff confirmation dialog 30 seconds before launch (or immediately if countdown already <= 0)
+        if countdown <= 30:
             if not self._takeoff_confirmation_pending and self._takeoff_confirmation_shown_for_drone != next_ns:
                 # Request user confirmation
                 self._takeoff_confirmation_pending = True
@@ -1959,14 +2001,44 @@ class MissionController:
             return
         self._last_vertical_separation_check = now
         
-        # Get all drones that are airborne (not IDLE or ERROR)
+        # Check if vertical separation is enabled
+        if not self._vertical_separation_enabled:
+            return
+        
+        # Get all drones that are actually airborne and in comparable flight states
+        # Exclude states where drone is on the ground or climbing (at different altitudes by design):
+        # - IDLE: not started
+        # - SETTING_RTH_ALTITUDE: on ground, setting parameters
+        # - TAKING_OFF: still on/just leaving ground
+        # - CLIMBING_TO_ALTITUDE: drones are at different altitudes by design during climb
+        # - RETURNING_HOME: drone is returning at its own RTH altitude
+        # - COMPLETED: landed
+        # - ABORTED: landed
+        # - ERROR: error state
+        EXCLUDED_STATES = [
+            MissionState.IDLE,
+            MissionState.SETTING_RTH_ALTITUDE,
+            MissionState.TAKING_OFF,
+            MissionState.CLIMBING_TO_ALTITUDE,
+            MissionState.RETURNING_HOME,
+            MissionState.COMPLETED,
+            MissionState.ABORTED,
+            MissionState.ERROR
+        ]
+        
         airborne_drones = []
         for ns, mission in self.drone_missions.items():
-            if mission.state not in [MissionState.IDLE, MissionState.ERROR]:
-                # Get altitude
+            if mission.state not in EXCLUDED_STATES:
+                # Get altitude using get_drone_position (which is known to work for climbing)
                 altitude = 0.0
-                if self.get_drone_altitude:
+                if self.get_drone_position:
+                    _, _, altitude = self.get_drone_position(ns)
+                    logger.debug(f"Vertical sep check: {ns} altitude from get_drone_position = {altitude:.1f}m (state={mission.state.name})")
+                elif self.get_drone_altitude:
                     altitude = self.get_drone_altitude(ns)
+                    logger.debug(f"Vertical sep check: {ns} altitude from get_drone_altitude = {altitude:.1f}m (state={mission.state.name})")
+                else:
+                    logger.warning(f"No altitude callback registered!")
                 airborne_drones.append((ns, altitude, mission.state))
         
         # Check all pairs for vertical separation
@@ -2004,6 +2076,10 @@ class MissionController:
         # Handle countdown logic
         current_time = time.time()
         
+        # Don't start countdown if mission was already stopped due to vertical separation
+        if self._vertical_separation_mission_stopped:
+            return
+        
         if violation_found:
             ns1, ns2, alt1, alt2, vertical_sep, state1, state2 = violation_drones
             
@@ -2028,31 +2104,23 @@ class MissionController:
                 elapsed = current_time - self._vertical_separation_countdown_start
                 
                 if elapsed >= self._vertical_separation_countdown_duration:
-                    # 20 seconds passed - trigger RTH on the climbing drone
-                    climbing_states = [MissionState.TAKING_OFF, MissionState.CLIMBING_TO_ALTITUDE]
+                    # 20 seconds passed - STOP ENTIRE MISSION (same as Stop button)
+                    self._emit_event(ns1, f"⚠️ COUNTDOWN EXPIRED - STOPPING MISSION due to vertical separation violation!")
+                    logger.warning(f"Vertical separation countdown expired - STOPPING ENTIRE MISSION")
                     
-                    self._emit_event(ns1, f"⚠️ COUNTDOWN EXPIRED - Triggering RTH due to vertical separation violation!")
-                    logger.warning(f"Vertical separation countdown expired - aborting mission")
+                    # Stop the entire mission (all drones RTH)
+                    self.stop_mission()
                     
-                    # Abort the climbing drone's mission (the one that should move away)
-                    if state1 in climbing_states:
-                        self._emit_event(ns1, f"ABORTING {ns1} mission due to vertical separation violation!")
-                        self.abort_drone_mission(ns1, "Vertical separation too small - RTH triggered after 20s countdown")
-                    elif state2 in climbing_states:
-                        self._emit_event(ns2, f"ABORTING {ns2} mission due to vertical separation violation!")
-                        self.abort_drone_mission(ns2, "Vertical separation too small - RTH triggered after 20s countdown")
-                    else:
-                        # Neither is climbing - abort the lower one
-                        if alt1 < alt2:
-                            self._emit_event(ns1, f"ABORTING {ns1} (lower drone) due to vertical separation violation!")
-                            self.abort_drone_mission(ns1, "Vertical separation too small - RTH triggered after 20s countdown")
-                        else:
-                            self._emit_event(ns2, f"ABORTING {ns2} (lower drone) due to vertical separation violation!")
-                            self.abort_drone_mission(ns2, "Vertical separation too small - RTH triggered after 20s countdown")
-                    
-                    # Reset countdown
+                    # Reset countdown state AFTER stopping mission
                     self._vertical_separation_countdown_active = False
                     self._vertical_separation_violating_drones = ()
+                    
+                    # Mark that mission was stopped due to vertical separation (prevent restart)
+                    self._vertical_separation_mission_stopped = True
+                    
+                    # Notify UI to update its state
+                    if self.on_vertical_separation_mission_stopped:
+                        self.on_vertical_separation_mission_stopped()
         else:
             # No violation - check if we need to cancel an active countdown
             if self._vertical_separation_countdown_active:

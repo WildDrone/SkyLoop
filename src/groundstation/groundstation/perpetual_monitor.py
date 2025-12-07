@@ -26,7 +26,7 @@ from sensor_msgs.msg import NavSatFix
 
 from nicegui import ui, app, ui_run
 
-from groundstation.mission_controller import MissionController, MissionState
+from groundstation.mission_controller import MissionController, MissionState, MissionMode
 
 
 # ============================================================================
@@ -1447,7 +1447,10 @@ class PerpetualMonitorNode(Node):
         5. Fly to monitoring point
         6. Start recording 50m before arrival
         """
-        if not self.monitoring_point.is_set:
+        # In FREE_FLIGHT mode, monitoring point is not required
+        is_free_flight = self.mission_controller.mission_mode == MissionMode.FREE_FLIGHT
+        
+        if not is_free_flight and not self.monitoring_point.is_set:
             self.get_logger().error("Cannot start mission: monitoring point not set")
             return False
         
@@ -1455,12 +1458,17 @@ class PerpetualMonitorNode(Node):
             self.get_logger().error(f"Drone {namespace} not found")
             return False
         
+        # Get monitoring point coordinates (use 0,0,0 for FREE_FLIGHT mode)
+        mon_lat = self.monitoring_point.latitude if self.monitoring_point.is_set else 0.0
+        mon_lon = self.monitoring_point.longitude if self.monitoring_point.is_set else 0.0
+        mon_alt = self.monitoring_point.altitude if self.monitoring_point.is_set else rth_altitude
+        
         # Use mission controller for proper state machine management
         success = self.mission_controller.start_single_mission(
             namespace,
-            self.monitoring_point.latitude,
-            self.monitoring_point.longitude,
-            self.monitoring_point.altitude,
+            mon_lat,
+            mon_lon,
+            mon_alt,
             rth_altitude
         )
         
@@ -1485,7 +1493,10 @@ class PerpetualMonitorNode(Node):
             drone_list: Ordered list of drones to use in relay
             rth_altitude: Base RTH altitude (each subsequent drone +15m)
         """
-        if not self.monitoring_point.is_set:
+        # In FREE_FLIGHT mode, monitoring point is not required
+        is_free_flight = self.mission_controller.mission_mode == MissionMode.FREE_FLIGHT
+        
+        if not is_free_flight and not self.monitoring_point.is_set:
             self.get_logger().error("Cannot start relay: monitoring point not set")
             return False
         
@@ -1502,12 +1513,17 @@ class PerpetualMonitorNode(Node):
                 self.get_logger().error(f"Drone {ns} not found")
                 return False
         
+        # Get monitoring point coordinates (use 0,0,0 for FREE_FLIGHT mode)
+        mon_lat = self.monitoring_point.latitude if self.monitoring_point.is_set else 0.0
+        mon_lon = self.monitoring_point.longitude if self.monitoring_point.is_set else 0.0
+        mon_alt = self.monitoring_point.altitude if self.monitoring_point.is_set else rth_altitude
+        
         # Use mission controller for relay
         success = self.mission_controller.start_relay_mission(
             drone_list,
-            self.monitoring_point.latitude,
-            self.monitoring_point.longitude,
-            self.monitoring_point.altitude,
+            mon_lat,
+            mon_lon,
+            mon_alt,
             rth_altitude
         )
         
