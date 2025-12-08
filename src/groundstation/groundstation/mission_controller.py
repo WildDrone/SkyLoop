@@ -1262,9 +1262,11 @@ class MissionController:
                     self._emit_event(namespace, f"Transit: {distance:.1f}m to target")
             
             # CONTINUOUS POSITION TRACKING for relay replacement drones
-            # Update target every 10 seconds to follow the moving monitoring drone
+            # Update target more frequently in Free Flight mode (2s) vs Monitoring Point mode (10s)
+            # because in Free Flight the pilot is actively flying and position changes rapidly
+            update_interval = 2.0 if self.mission_mode == MissionMode.FREE_FLIGHT else self._trajectory_update_interval
             if mission.replacing_drone and self.relay_state == RelayState.ACTIVE:
-                if now - self._last_trajectory_update_time >= self._trajectory_update_interval:
+                if now - self._last_trajectory_update_time >= update_interval:
                     self._last_trajectory_update_time = now
                     self._update_replacement_target(namespace, mission)
             
@@ -1741,19 +1743,31 @@ class MissionController:
         lat, lon, _ = self.get_drone_position(namespace)
         
         # Determine target position for distance calculation
-        # For relay missions, use the monitoring drone's position
-        target_lat = self.config.monitoring_lat
-        target_lon = self.config.monitoring_lon
+        # Priority:
+        # 1. Use mission.target_lat/lon if already set (e.g., from relay transit setup)
+        # 2. For relay missions, use the monitoring/waiting drone's position
+        # 3. Fall back to monitoring point config
+        target_lat = mission.target_lat if mission.target_lat != 0.0 else self.config.monitoring_lat
+        target_lon = mission.target_lon if mission.target_lon != 0.0 else self.config.monitoring_lon
         
         if self.relay_state == RelayState.ACTIVE:
-            current_monitoring_ns = self._get_currently_monitoring_drone(exclude=namespace)
-            if current_monitoring_ns and self.get_drone_position:
-                mon_lat, mon_lon, _ = self.get_drone_position(current_monitoring_ns)
+            # For relay: get target drone (could be in MONITORING or WAITING_FOR_RELAY state)
+            target_drone_ns = mission.replacing_drone if mission.replacing_drone else self._get_currently_monitoring_drone(exclude=namespace)
+            
+            # Also check for drones in WAITING_FOR_RELAY (they were MONITORING before relay started)
+            if not target_drone_ns:
+                for ns, m in self.drone_missions.items():
+                    if ns != namespace and m.state == MissionState.WAITING_FOR_RELAY:
+                        target_drone_ns = ns
+                        break
+            
+            if target_drone_ns and self.get_drone_position:
+                mon_lat, mon_lon, _ = self.get_drone_position(target_drone_ns)
                 if mon_lat != 0.0 and mon_lon != 0.0:
                     target_lat = mon_lat
                     target_lon = mon_lon
                     
-                    # Re-evaluate trajectory if monitoring drone moved > 5 meters
+                    # Re-evaluate trajectory if target drone moved > 5 meters
                     # Only for PID mode - DJI Native doesn't support live trajectory updates
                     if not self.use_dji_native:
                         if mission.target_lat != 0.0 and mission.target_lon != 0.0:
@@ -1761,14 +1775,14 @@ class MissionController:
                                 mission.target_lat, mission.target_lon,
                                 target_lat, target_lon
                             )
-                            if target_moved > 5.0:  # Monitoring drone moved more than 5m
+                            if target_moved > 5.0:  # Target drone moved more than 5m
                                 self._emit_event(namespace, f"Target moved {target_moved:.1f}m - updating trajectory")
                                 mission.target_lat = target_lat
                                 mission.target_lon = target_lon
                                 
-                                # Also sync heading from monitoring drone
+                                # Also sync heading from target drone
                                 if self.get_drone_heading:
-                                    mission.target_heading = self.get_drone_heading(current_monitoring_ns)
+                                    mission.target_heading = self.get_drone_heading(target_drone_ns)
                                 
                                 # Send updated waypoint command
                                 self._send_updated_trajectory(namespace, mission)
@@ -1839,7 +1853,8 @@ class MissionController:
         
         # Don't process relay logic if remaining flight time is not yet available (0 or very low)
         # This prevents premature relay triggering when DJI data hasn't arrived yet
-        if remaining < 60:  # Less than 1 minute means data likely not ready
+        # Use a lower threshold (30s) to allow countdown display even with partial data
+        if remaining < 30:
             return
         
         # Calculate when next drone should launch
@@ -1870,8 +1885,13 @@ class MissionController:
         if self.on_relay_countdown:
             self.on_relay_countdown(countdown, next_ns, timing_breakdown)
         
+        # Check if next drone is ready (IDLE or COMPLETED state)
+        next_mission = self.drone_missions.get(next_ns)
+        next_drone_ready = next_mission and next_mission.state in [MissionState.IDLE, MissionState.COMPLETED]
+        
         # Show takeoff confirmation dialog 30 seconds before launch (or immediately if countdown already <= 0)
-        if countdown <= 30:
+        # Only show if the next drone is actually ready to launch
+        if countdown <= 30 and next_drone_ready:
             if not self._takeoff_confirmation_pending and self._takeoff_confirmation_shown_for_drone != next_ns:
                 # Request user confirmation
                 self._takeoff_confirmation_pending = True
@@ -2170,6 +2190,9 @@ class MissionController:
         
         # Set manual swap mode active
         self._manual_swap_active = True
+        
+        # Re-activate relay state in case it was cancelled
+        self.relay_state = RelayState.ACTIVE
         
         # Clear any pending automatic launch to prevent double launches
         self._relay_launch_pending = False

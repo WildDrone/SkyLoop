@@ -177,7 +177,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.mission_status_label = None
         self.countdown_label = None
         self.countdown_progress = None
-        self.countdown_container = Nonex  # Container for countdown (hidden during manual swap)
+        self.countdown_container = None  # Container for countdown (hidden during manual swap)
         self.force_swap_button = None  # Button to trigger manual swap
         self.active_drone_label = None
         self.next_drone_label = None
