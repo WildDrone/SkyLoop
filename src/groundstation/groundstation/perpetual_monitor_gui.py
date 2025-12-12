@@ -240,6 +240,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Video feed visibility state tracking
         self.drone_video_visible: Dict[str, bool] = {}  # {drone_ns: is_visible}
         
+        # YOLO detection state
+        self.yolo_model = None  # Ultralytics YOLO model instance
+        self.yolo_model_path = None  # Path to loaded model
+        self.yolo_running: Dict[str, bool] = {}  # {namespace: is_running}
+        self.yolo_detections: Dict[str, list] = {}  # {namespace: [detections]}
+        
         # Connection form elements
         self.ip_input = None
         self.namespace_input = None
@@ -318,14 +324,49 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Header with drone name and back button
             with ui.row().classes('absolute top-0 left-0 right-0 p-4 items-center justify-between').style('background: rgba(0,0,0,0.7); z-index: 100;'):
                 ui.label(f'📹 {namespace} - Live Video Feed').classes('text-white text-xl font-bold')
-                with ui.row().classes('gap-2'):
+                with ui.row().classes('gap-2 items-center'):
+                    # YOLO Detection controls
+                    yolo_status = ui.label('🔴 YOLO Off').classes('text-white text-sm mr-4')
+                    yolo_status_ref = yolo_status
+                    yolo_btn = ui.button('Load YOLO', icon='psychology').props('flat color=white size=sm')
+                    yolo_stop_btn = ui.button('Stop YOLO', icon='stop').props('flat color=white size=sm').classes('hidden')
                     ui.button('Back to Groundstation', icon='arrow_back', on_click=lambda: ui.navigate.to('/')).props('flat color=white')
             
-            # Fullscreen video element with metadata overlay
+            # Fullscreen video element with metadata overlay and detection canvas
             video_html = f'''
-            <div style="position: relative; width: 100vw; height: 100vh;">
+            <div id="videoContainer_{namespace}" style="position: relative; width: 100vw; height: 100vh;">
                 <video id="fullscreenVideo_{namespace}" autoplay playsinline muted 
                        style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
+                
+                <!-- Detection canvas overlay -->
+                <canvas id="detectionCanvas_{namespace}" style="
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    pointer-events: none;
+                    z-index: 40;
+                "></canvas>
+                
+                <!-- YOLO Stats overlay - top center -->
+                <div id="yoloStats_{namespace}" style="
+                    position: absolute;
+                    top: 80px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: rgba(128, 0, 128, 0.85);
+                    color: #fff;
+                    font-family: 'Courier New', monospace;
+                    font-size: 12px;
+                    padding: 8px 15px;
+                    border-radius: 8px;
+                    z-index: 50;
+                    display: none;
+                ">
+                    <span id="yoloInferenceTime_{namespace}">Inference: -- ms</span> | 
+                    <span id="yoloDetections_{namespace}">Detections: 0</span>
+                </div>
                 
                 <!-- Drone Telemetry overlay - bottom left -->
                 <div id="telemetryOverlay_{namespace}" style="
@@ -438,6 +479,289 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             </div>
             '''
             ui.html(video_html, sanitize=False)
+        
+        # Initialize YOLO state for this namespace
+        self.yolo_running[namespace] = False
+        self.yolo_detections[namespace] = []
+        
+        # Server-side YOLO detection handler
+        async def load_yolo_model(e):
+            """Handle YOLO model file upload and load with ultralytics."""
+            try:
+                # NiceGUI UploadEventArguments has 'file' attribute with FileUpload object
+                # FileUpload has: name, read(), text(), json(), save(), size()
+                # Note: read() is async in NiceGUI
+                filename = e.file.name
+                content = await e.file.read()
+                
+                # Save to temp file
+                import tempfile
+                import os
+                temp_dir = tempfile.gettempdir()
+                model_path = os.path.join(temp_dir, filename)
+                
+                with open(model_path, 'wb') as f:
+                    f.write(content)
+                
+                self.get_logger().info(f"[YOLO] Saved model to {model_path}")
+                
+                # Load model with ultralytics
+                try:
+                    from ultralytics import YOLO
+                    self.yolo_model = YOLO(model_path)
+                    self.yolo_model_path = model_path
+                    self.yolo_running[namespace] = True
+                    
+                    # Update UI
+                    yolo_status_ref.text = '🟢 YOLO On'
+                    yolo_status_ref.style('color: #4ade80')
+                    yolo_btn.classes(remove='', add='hidden')
+                    yolo_stop_btn.classes(remove='hidden', add='')
+                    
+                    # Show YOLO stats
+                    ui.run_javascript(f'''
+                        document.getElementById("yoloStats_{namespace}").style.display = "block";
+                    ''')
+                    
+                    ui.notify(f'YOLO model loaded: {filename}', type='positive')
+                    self.get_logger().info(f"[YOLO] Model loaded successfully: {filename}")
+                    
+                    # Start detection loop
+                    start_detection_loop()
+                    
+                except ImportError:
+                    ui.notify('ultralytics not installed. Run: pip install ultralytics', type='negative')
+                    self.get_logger().error("[YOLO] ultralytics package not installed")
+                except Exception as ex:
+                    ui.notify(f'Failed to load model: {str(ex)}', type='negative')
+                    self.get_logger().error(f"[YOLO] Failed to load model: {ex}")
+                    
+            except Exception as ex:
+                ui.notify(f'Error uploading file: {str(ex)}', type='negative')
+                self.get_logger().error(f"[YOLO] Upload error: {ex}")
+        
+        def stop_yolo():
+            """Stop YOLO detection."""
+            self.yolo_running[namespace] = False
+            self.yolo_detections[namespace] = []
+            
+            # Cancel the detection timer if it exists
+            if hasattr(self, 'yolo_timer') and self.yolo_timer:
+                self.yolo_timer.cancel()
+                self.yolo_timer = None
+            
+            yolo_status_ref.text = '🔴 YOLO Off'
+            yolo_status_ref.style('color: white')
+            yolo_btn.classes(remove='hidden', add='')
+            yolo_stop_btn.classes(remove='', add='hidden')
+            
+            # Hide YOLO stats and clear canvas
+            ui.run_javascript(f'''
+                document.getElementById("yoloStats_{namespace}").style.display = "none";
+                const canvas = document.getElementById("detectionCanvas_{namespace}");
+                if (canvas) {{
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }}
+            ''')
+            
+            ui.notify('YOLO detection stopped', type='info')
+            self.get_logger().info(f"[YOLO] Detection stopped for {namespace}")
+        
+        def start_detection_loop():
+            """Start the server-side YOLO detection loop using ui.timer for proper context."""
+            import base64
+            import json
+            
+            async def run_detection():
+                """Single detection iteration - called by ui.timer."""
+                if not self.yolo_running.get(namespace, False) or self.yolo_model is None:
+                    return
+                
+                try:
+                    # Request frame capture from browser
+                    frame_data = await ui.run_javascript(f'''
+                        (function() {{
+                            const video = document.getElementById("fullscreenVideo_{namespace}");
+                            if (!video || video.readyState < 2) return null;
+                            
+                            const canvas = document.createElement('canvas');
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(video, 0, 0);
+                            
+                            // Return as base64 JPEG (smaller than PNG)
+                            return canvas.toDataURL('image/jpeg', 0.8);
+                        }})();
+                    ''', timeout=2.0)
+                    
+                    if frame_data and frame_data.startswith('data:image'):
+                        # Decode base64 image
+                        import cv2
+                        import numpy as np
+                        import time
+                        
+                        # Remove data URL prefix
+                        img_data = frame_data.split(',')[1]
+                        img_bytes = base64.b64decode(img_data)
+                        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+                        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                        
+                        if frame is not None:
+                            # Run YOLO inference
+                            start_time = time.time()
+                            
+                            results = self.yolo_model(frame, verbose=False, conf=0.25)
+                            
+                            inference_time = (time.time() - start_time) * 1000
+                            
+                            # Extract detections
+                            detections = []
+                            if results and len(results) > 0:
+                                result = results[0]
+                                if result.boxes is not None:
+                                    boxes = result.boxes
+                                    for i in range(len(boxes)):
+                                        box = boxes[i]
+                                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                                        conf = float(box.conf[0])
+                                        cls_id = int(box.cls[0])
+                                        cls_name = result.names[cls_id] if cls_id in result.names else f'class_{cls_id}'
+                                        
+                                        detections.append({
+                                            'box': [x1, y1, x2, y2],
+                                            'score': conf,
+                                            'classId': cls_id,
+                                            'className': cls_name
+                                        })
+                            
+                            self.yolo_detections[namespace] = detections
+                            
+                            # Send detections to browser for rendering
+                            detections_json = json.dumps(detections)
+                            
+                            ui.run_javascript(f'''
+                                (function() {{
+                                    const detections = {detections_json};
+                                    const video = document.getElementById("fullscreenVideo_{namespace}");
+                                    const canvas = document.getElementById("detectionCanvas_{namespace}");
+                                    const inferenceTimeEl = document.getElementById("yoloInferenceTime_{namespace}");
+                                    const detectionsEl = document.getElementById("yoloDetections_{namespace}");
+                                    
+                                    if (!video || !canvas) return;
+                                    
+                                    // Color palette
+                                    const colors = [
+                                        '#FF3838', '#FF9D97', '#FF701F', '#FFB21D', '#CFD231', '#48F90A', '#92CC17', '#3DDB86',
+                                        '#1A9334', '#00D4BB', '#2C99A8', '#00C2FF', '#344593', '#6473FF', '#0018EC', '#8438FF'
+                                    ];
+                                    
+                                    const ctx = canvas.getContext('2d');
+                                    const rect = video.getBoundingClientRect();
+                                    canvas.width = rect.width;
+                                    canvas.height = rect.height;
+                                    
+                                    // Calculate video scaling
+                                    const videoAspect = video.videoWidth / video.videoHeight;
+                                    const containerAspect = rect.width / rect.height;
+                                    
+                                    let drawWidth, drawHeight, offsetX, offsetY;
+                                    if (videoAspect > containerAspect) {{
+                                        drawWidth = rect.width;
+                                        drawHeight = rect.width / videoAspect;
+                                        offsetX = 0;
+                                        offsetY = (rect.height - drawHeight) / 2;
+                                    }} else {{
+                                        drawHeight = rect.height;
+                                        drawWidth = rect.height * videoAspect;
+                                        offsetX = (rect.width - drawWidth) / 2;
+                                        offsetY = 0;
+                                    }}
+                                    
+                                    const scaleX = drawWidth / video.videoWidth;
+                                    const scaleY = drawHeight / video.videoHeight;
+                                    
+                                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                        
+                                        for (const det of detections) {{
+                                            const [x1, y1, x2, y2] = det.box;
+                                            const sx1 = x1 * scaleX + offsetX;
+                                            const sy1 = y1 * scaleY + offsetY;
+                                            const sx2 = x2 * scaleX + offsetX;
+                                            const sy2 = y2 * scaleY + offsetY;
+                                            const w = sx2 - sx1;
+                                            const h = sy2 - sy1;
+                                            
+                                            const color = colors[det.classId % colors.length];
+                                            
+                                            // Draw box
+                                            ctx.strokeStyle = color;
+                                            ctx.lineWidth = 3;
+                                            ctx.strokeRect(sx1, sy1, w, h);
+                                            
+                                            // Draw label background
+                                            const label = det.className + ' ' + (det.score * 100).toFixed(0) + '%';
+                                            ctx.font = 'bold 14px Arial';
+                                            const textWidth = ctx.measureText(label).width;
+                                            
+                                            ctx.fillStyle = color;
+                                            ctx.fillRect(sx1, sy1 - 22, textWidth + 10, 22);
+                                            
+                                            // Draw label text
+                                            ctx.fillStyle = '#fff';
+                                            ctx.fillText(label, sx1 + 5, sy1 - 6);
+                                        }}
+                                        
+                                        // Update stats
+                                        if (inferenceTimeEl) inferenceTimeEl.textContent = "Inference: {inference_time:.0f} ms";
+                                        if (detectionsEl) detectionsEl.textContent = "Detections: " + detections.length;
+                                    }})();
+                                ''')
+                
+                except Exception as ex:
+                    self.get_logger().error(f"[YOLO] Detection error: {ex}")
+            
+            # Use ui.timer for proper NiceGUI context (runs every 200ms = 5 FPS detection)
+            # Store timer reference so we can cancel it when stopping
+            self.yolo_timer = ui.timer(0.2, run_detection)
+            self.get_logger().info(f"[YOLO] Detection loop started for {namespace}")
+        
+        # File upload dialog for YOLO model
+        def show_yolo_upload_dialog():
+            with ui.dialog() as dialog, ui.card().classes('p-4'):
+                ui.label('Load YOLO Model').classes('text-xl font-bold mb-2')
+                ui.label('Select a YOLOv8 model file (.pt)').classes('text-gray-600 mb-4')
+                
+                async def handle_upload(e):
+                    """Async handler for YOLO model upload."""
+                    await load_yolo_model(e)
+                    dialog.close()
+                
+                upload = ui.upload(
+                    label='Drop model file here or click to browse',
+                    auto_upload=True,
+                    on_upload=handle_upload
+                ).props('accept=".pt,.onnx" color="primary"').classes('w-full')
+                
+                with ui.row().classes('w-full justify-end mt-4'):
+                    ui.button('Cancel', on_click=dialog.close).props('flat')
+            
+            dialog.open()
+        
+        yolo_btn.on_click(show_yolo_upload_dialog)
+        yolo_stop_btn.on_click(stop_yolo)
+        
+        # YOLO drawing JavaScript (client-side rendering only)
+        ui.run_javascript(f'''
+        (function setupYOLOCanvas() {{
+            // Just ensure canvas is ready
+            const canvas = document.getElementById("detectionCanvas_{namespace}");
+            if (canvas) {{
+                canvas.style.pointerEvents = "none";
+            }}
+        }})();
+        ''')
         
         # Auto-start WebRTC connection with telemetry data channel
         ui.run_javascript(f'''
