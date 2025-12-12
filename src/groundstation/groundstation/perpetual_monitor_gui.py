@@ -205,6 +205,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.normal_logs_container = None
         self.mission_stats_card = None  # Card to hide when debug console is shown
         
+        # Silent mode (mute all sounds)
+        self.silent_mode = False
+        self.silent_toggle = None
+        
         # Event log
         self.event_log = None
         
@@ -232,6 +236,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # State machine display elements
         self.state_machine_container = None
         self.state_machine_labels: Dict[str, Dict[str, ui.label]] = {}
+        
+        # Video feed visibility state tracking
+        self.drone_video_visible: Dict[str, bool] = {}  # {drone_ns: is_visible}
         
         # Connection form elements
         self.ip_input = None
@@ -284,6 +291,525 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         @ui.page('/')
         def main_page():
             self._build_ui()
+        
+        # Define fullscreen video page for each drone
+        @ui.page('/video/{namespace}')
+        def video_page(namespace: str):
+            self._build_fullscreen_video_page(namespace)
+    
+    def _build_fullscreen_video_page(self, namespace: str):
+        """Build a fullscreen video page for a drone."""
+        # Check if drone exists
+        if namespace not in self.drones:
+            ui.label(f'Drone {namespace} not found').classes('text-2xl text-red-500')
+            return
+        
+        drone = self.drones[namespace]
+        if not drone.ip_address:
+            ui.label(f'No IP address for {namespace}').classes('text-2xl text-red-500')
+            return
+        
+        ws_url = f"ws://{drone.ip_address}:8082"
+        
+        # Dark background fullscreen layout
+        ui.query('body').style('margin: 0; padding: 0; background: #000; overflow: hidden;')
+        
+        with ui.column().classes('w-screen h-screen items-center justify-center').style('background: #000; position: relative;'):
+            # Header with drone name and back button
+            with ui.row().classes('absolute top-0 left-0 right-0 p-4 items-center justify-between').style('background: rgba(0,0,0,0.7); z-index: 100;'):
+                ui.label(f'📹 {namespace} - Live Video Feed').classes('text-white text-xl font-bold')
+                with ui.row().classes('gap-2'):
+                    ui.button('Back to Groundstation', icon='arrow_back', on_click=lambda: ui.navigate.to('/')).props('flat color=white')
+            
+            # Fullscreen video element with metadata overlay
+            video_html = f'''
+            <div style="position: relative; width: 100vw; height: 100vh;">
+                <video id="fullscreenVideo_{namespace}" autoplay playsinline muted 
+                       style="width: 100%; height: 100%; object-fit: contain; background: #000;"></video>
+                
+                <!-- Drone Telemetry overlay - bottom left -->
+                <div id="telemetryOverlay_{namespace}" style="
+                    position: absolute;
+                    bottom: 20px;
+                    left: 20px;
+                    background: rgba(0, 0, 0, 0.8);
+                    color: #00ff00;
+                    font-family: 'Courier New', monospace;
+                    font-size: 13px;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border: 1px solid rgba(0, 255, 0, 0.3);
+                    min-width: 320px;
+                    z-index: 50;
+                    line-height: 1.6;
+                ">
+                    <div style="font-weight: bold; margin-bottom: 10px; color: #fff; font-size: 16px;">🚁 Drone Telemetry</div>
+                    
+                    <!-- GPS Section -->
+                    <div style="color: #00ffff;">
+                        <div id="telem_gps_{namespace}">📍 GPS: --</div>
+                        <div id="telem_altitude_{namespace}">🏔️ Alt: ASL -- AGL --</div>
+                        <div id="telem_sats_{namespace}">🛰️ Satellites: --</div>
+                    </div>
+                    
+                    <!-- Gimbal Section -->
+                    <div style="margin-top: 8px; color: #ffff00;">
+                        <div id="telem_gimbal_{namespace}">🎥 Gimbal P:-- Y:-- R:--</div>
+                    </div>
+                    
+                    <!-- Attitude Section -->
+                    <div style="margin-top: 8px; color: #ffa500;">
+                        <div id="telem_attitude_{namespace}">✈️ Attitude P:-- Y:-- R:--</div>
+                        <div id="telem_heading_{namespace}">🧭 Heading: --°</div>
+                    </div>
+                    
+                    <!-- Velocity Section -->
+                    <div style="margin-top: 8px; color: #00bfff;">
+                        <div id="telem_velocity_{namespace}">💨 Speed: -- m/s</div>
+                    </div>
+                    
+                    <!-- Battery Section -->
+                    <div style="margin-top: 8px;">
+                        <div id="telem_battery_{namespace}">🔋 Battery: --%</div>
+                    </div>
+                    
+                    <!-- Frame Info -->
+                    <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px; color: #aaa;">
+                        <div id="telem_frame_{namespace}">📹 Frame: --</div>
+                    </div>
+                </div>
+                
+                <!-- Stream Stats overlay - bottom right -->
+                <div id="streamStatsOverlay_{namespace}" style="
+                    position: absolute;
+                    bottom: 20px;
+                    right: 20px;
+                    background: rgba(0, 0, 0, 0.75);
+                    color: #00ff00;
+                    font-family: 'Courier New', monospace;
+                    font-size: 12px;
+                    padding: 12px;
+                    border-radius: 8px;
+                    border: 1px solid rgba(0, 255, 0, 0.3);
+                    min-width: 200px;
+                    z-index: 50;
+                ">
+                    <div style="font-weight: bold; margin-bottom: 8px; color: #fff; font-size: 14px;">📊 Stream Stats</div>
+                    <div id="meta_resolution_{namespace}">Resolution: --</div>
+                    <div id="meta_bitrate_{namespace}">Bitrate: --</div>
+                    <div id="meta_codec_{namespace}">Codec: --</div>
+                    <div id="meta_latency_{namespace}">Latency: --</div>
+                    <div id="meta_jitter_{namespace}">Jitter: --</div>
+                    <div id="meta_frames_{namespace}">Frames: --</div>
+                    <div id="meta_dropped_{namespace}">Dropped: --</div>
+                </div>
+                
+                <!-- Connection status indicator - top right -->
+                <div id="connectionStatus_{namespace}" style="
+                    position: absolute;
+                    top: 80px;
+                    right: 20px;
+                    background: rgba(0, 0, 0, 0.75);
+                    color: #fff;
+                    font-family: sans-serif;
+                    font-size: 14px;
+                    padding: 10px 15px;
+                    border-radius: 20px;
+                    z-index: 50;
+                ">
+                    ⏳ Connecting...
+                </div>
+                
+                <!-- Data channel status - top left below header -->
+                <div id="dataChannelStatus_{namespace}" style="
+                    position: absolute;
+                    top: 80px;
+                    left: 20px;
+                    background: rgba(0, 0, 0, 0.75);
+                    color: #888;
+                    font-family: sans-serif;
+                    font-size: 12px;
+                    padding: 8px 12px;
+                    border-radius: 15px;
+                    z-index: 50;
+                ">
+                    📡 Telemetry: waiting...
+                </div>
+            </div>
+            '''
+            ui.html(video_html, sanitize=False)
+        
+        # Auto-start WebRTC connection with telemetry data channel
+        ui.run_javascript(f'''
+        (async function connectFullscreenStream() {{
+            const wsUrl = "{ws_url}";
+            const namespace = "{namespace}";
+            const remoteVideo = document.getElementById("fullscreenVideo_{namespace}");
+            const connectionStatus = document.getElementById("connectionStatus_{namespace}");
+            const dataChannelStatus = document.getElementById("dataChannelStatus_{namespace}");
+            
+            // Telemetry elements
+            const telemGps = document.getElementById("telem_gps_{namespace}");
+            const telemAltitude = document.getElementById("telem_altitude_{namespace}");
+            const telemSats = document.getElementById("telem_sats_{namespace}");
+            const telemGimbal = document.getElementById("telem_gimbal_{namespace}");
+            const telemAttitude = document.getElementById("telem_attitude_{namespace}");
+            const telemHeading = document.getElementById("telem_heading_{namespace}");
+            const telemVelocity = document.getElementById("telem_velocity_{namespace}");
+            const telemBattery = document.getElementById("telem_battery_{namespace}");
+            const telemFrame = document.getElementById("telem_frame_{namespace}");
+            
+            // Stream stats elements
+            const metaResolution = document.getElementById("meta_resolution_{namespace}");
+            const metaBitrate = document.getElementById("meta_bitrate_{namespace}");
+            const metaCodec = document.getElementById("meta_codec_{namespace}");
+            const metaLatency = document.getElementById("meta_latency_{namespace}");
+            const metaJitter = document.getElementById("meta_jitter_{namespace}");
+            const metaFrames = document.getElementById("meta_frames_{namespace}");
+            const metaDropped = document.getElementById("meta_dropped_{namespace}");
+            
+            let lastBytesReceived = 0;
+            let lastTimestamp = Date.now();
+            let statsInterval = null;
+            let telemetryChannel = null;
+            
+            function setConnectionStatus(text, color) {{
+                if (connectionStatus) {{
+                    connectionStatus.textContent = text;
+                    connectionStatus.style.background = color;
+                }}
+            }}
+            
+            function setDataChannelStatus(text, color) {{
+                if (dataChannelStatus) {{
+                    dataChannelStatus.textContent = "📡 Telemetry: " + text;
+                    dataChannelStatus.style.color = color;
+                }}
+            }}
+            
+            function updateTelemetry(meta) {{
+                if (!meta) return;
+                
+                // GPS
+                const lat = meta.latitude || 0;
+                const lon = meta.longitude || 0;
+                if (telemGps) {{
+                    if (lat !== 0 || lon !== 0) {{
+                        telemGps.textContent = "📍 GPS: " + lat.toFixed(6) + ", " + lon.toFixed(6);
+                    }} else {{
+                        telemGps.textContent = "📍 GPS: No fix";
+                    }}
+                }}
+                
+                // Altitude
+                const altASL = meta.altitudeASL || 0;
+                const altAGL = meta.altitudeAGL || 0;
+                if (telemAltitude) {{
+                    telemAltitude.textContent = "🏔️ Alt: ASL " + altASL.toFixed(1) + "m AGL " + altAGL.toFixed(1) + "m";
+                }}
+                
+                // Satellites
+                const sats = meta.satelliteCount || 0;
+                if (telemSats) {{
+                    let satsColor = sats > 10 ? "#00ff00" : sats > 5 ? "#ffa500" : "#ff0000";
+                    telemSats.innerHTML = '🛰️ Satellites: <span style="color:' + satsColor + '">' + sats + '</span>';
+                }}
+                
+                // Gimbal
+                const gimbalPitch = meta.gimbalPitch || 0;
+                const gimbalYaw = meta.gimbalYaw || 0;
+                const gimbalRoll = meta.gimbalRoll || 0;
+                if (telemGimbal) {{
+                    telemGimbal.textContent = "🎥 Gimbal P:" + gimbalPitch.toFixed(1) + "° Y:" + gimbalYaw.toFixed(1) + "° R:" + gimbalRoll.toFixed(1) + "°";
+                }}
+                
+                // Attitude
+                const pitch = meta.aircraftPitch || 0;
+                const yaw = meta.aircraftYaw || 0;
+                const roll = meta.aircraftRoll || 0;
+                if (telemAttitude) {{
+                    telemAttitude.textContent = "✈️ Attitude P:" + pitch.toFixed(1) + "° Y:" + yaw.toFixed(1) + "° R:" + roll.toFixed(1) + "°";
+                }}
+                
+                // Heading
+                if (telemHeading) {{
+                    telemHeading.textContent = "🧭 Heading: " + yaw.toFixed(1) + "°";
+                }}
+                
+                // Velocity
+                const vx = meta.velocityX || 0;
+                const vy = meta.velocityY || 0;
+                const vz = meta.velocityZ || 0;
+                const speed = Math.sqrt(vx*vx + vy*vy + vz*vz);
+                if (telemVelocity) {{
+                    telemVelocity.textContent = "💨 Speed: " + speed.toFixed(1) + " m/s";
+                }}
+                
+                // Battery with color coding
+                const battery = meta.batteryPercent || 0;
+                if (telemBattery) {{
+                    let batteryColor = battery > 30 ? "#00ff00" : battery > 15 ? "#ffa500" : "#ff0000";
+                    telemBattery.innerHTML = '🔋 Battery: <span style="color:' + batteryColor + '">' + battery + '%</span>';
+                }}
+                
+                // Frame number
+                const frameNum = meta.frameNumber || "N/A";
+                if (telemFrame) {{
+                    telemFrame.textContent = "📹 Frame: " + frameNum;
+                }}
+            }}
+            
+            function formatBitrate(bps) {{
+                if (bps < 1000) return bps.toFixed(0) + " bps";
+                if (bps < 1000000) return (bps / 1000).toFixed(1) + " Kbps";
+                return (bps / 1000000).toFixed(2) + " Mbps";
+            }}
+            
+            async function updateStats(pc) {{
+                if (!pc) return;
+                
+                try {{
+                    const stats = await pc.getStats();
+                    
+                    stats.forEach(report => {{
+                        if (report.type === "inbound-rtp" && report.kind === "video") {{
+                            // Calculate bitrate
+                            const now = Date.now();
+                            const bytesReceived = report.bytesReceived || 0;
+                            const timeDiff = (now - lastTimestamp) / 1000;
+                            const bytesDiff = bytesReceived - lastBytesReceived;
+                            const bitrate = timeDiff > 0 ? (bytesDiff * 8) / timeDiff : 0;
+                            
+                            lastBytesReceived = bytesReceived;
+                            lastTimestamp = now;
+                            
+                            if (metaBitrate) metaBitrate.textContent = "Bitrate: " + formatBitrate(bitrate);
+                            if (metaJitter) metaJitter.textContent = "Jitter: " + ((report.jitter || 0) * 1000).toFixed(2) + " ms";
+                            if (metaFrames) metaFrames.textContent = "Frames: " + (report.framesDecoded || 0).toLocaleString();
+                            if (metaDropped) metaDropped.textContent = "Dropped: " + (report.framesDropped || 0);
+                            
+                            // Get codec info
+                            if (report.codecId) {{
+                                const codecReport = stats.get(report.codecId);
+                                if (codecReport && metaCodec) {{
+                                    metaCodec.textContent = "Codec: " + (codecReport.mimeType || "unknown").replace("video/", "");
+                                }}
+                            }}
+                        }}
+                        
+                        if (report.type === "candidate-pair" && report.state === "succeeded") {{
+                            if (metaLatency) {{
+                                metaLatency.textContent = "Latency: " + (report.currentRoundTripTime ? (report.currentRoundTripTime * 1000).toFixed(1) + " ms" : "--");
+                            }}
+                        }}
+                    }});
+                    
+                    // Update video resolution from video element
+                    if (remoteVideo && remoteVideo.videoWidth > 0) {{
+                        if (metaResolution) metaResolution.textContent = "Resolution: " + remoteVideo.videoWidth + "x" + remoteVideo.videoHeight;
+                    }}
+                    
+                }} catch (e) {{
+                    console.error("Error getting stats:", e);
+                }}
+            }}
+            
+            function addDebug(msg) {{
+                console.log("[WebRTC Fullscreen " + namespace + "] " + msg);
+            }}
+            
+            function setupTelemetryChannel(channel) {{
+                addDebug("Setting up telemetry channel: " + channel.label);
+                telemetryChannel = channel;
+                
+                channel.onopen = () => {{
+                    addDebug("Telemetry channel opened");
+                    setDataChannelStatus("connected", "#00ff00");
+                }};
+                
+                channel.onmessage = (event) => {{
+                    try {{
+                        if (!event.data) return;
+                        const meta = JSON.parse(event.data);
+                        updateTelemetry(meta);
+                        addDebug("Telemetry received: frame " + (meta.frameNumber || "N/A"));
+                    }} catch (e) {{
+                        addDebug("Telemetry parse error: " + e.message);
+                    }}
+                }};
+                
+                channel.onclose = () => {{
+                    addDebug("Telemetry channel closed");
+                    setDataChannelStatus("closed", "#888");
+                }};
+                
+                channel.onerror = (error) => {{
+                    addDebug("Telemetry channel error: " + error);
+                    setDataChannelStatus("error", "#ff0000");
+                }};
+                
+                // If channel is already open
+                if (channel.readyState === "open") {{
+                    setDataChannelStatus("connected", "#00ff00");
+                }}
+            }}
+            
+            if (!remoteVideo) {{
+                addDebug("Video element not found");
+                setConnectionStatus("❌ Video element not found", "rgba(239, 68, 68, 0.9)");
+                return;
+            }}
+            
+            setConnectionStatus("⏳ Connecting...", "rgba(245, 158, 11, 0.9)");
+            addDebug("Starting fullscreen connection to " + wsUrl);
+            
+            const ws = new WebSocket(wsUrl);
+            let pc = null;
+            
+            ws.onopen = async () => {{
+                addDebug("WebSocket connected");
+                setConnectionStatus("🔗 WebSocket connected", "rgba(59, 130, 246, 0.9)");
+                
+                const config = {{
+                    iceServers: [{{ urls: "stun:stun.l.google.com:19302" }}]
+                }};
+                
+                pc = new RTCPeerConnection(config);
+                addDebug("RTCPeerConnection created");
+                
+                // Create telemetry data channel (negotiated mode to match Android side)
+                try {{
+                    telemetryChannel = pc.createDataChannel("telemetry", {{
+                        negotiated: true,
+                        id: 0,
+                        ordered: true
+                    }});
+                    addDebug("Created telemetry data channel (negotiated mode)");
+                    setupTelemetryChannel(telemetryChannel);
+                }} catch (e) {{
+                    addDebug("Error creating telemetry channel: " + e.message);
+                }}
+                
+                // Also handle incoming data channels (if Android creates it differently)
+                pc.ondatachannel = (event) => {{
+                    addDebug("Received data channel: " + event.channel.label);
+                    if (event.channel.label === "telemetry") {{
+                        setupTelemetryChannel(event.channel);
+                    }}
+                }};
+                
+                pc.onicecandidate = (event) => {{
+                    if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {{
+                        ws.send(JSON.stringify(event.candidate));
+                    }}
+                }};
+                
+                pc.ontrack = (event) => {{
+                    addDebug("Track received: " + event.track.kind);
+                    
+                    if (event.streams && event.streams[0]) {{
+                        remoteVideo.srcObject = event.streams[0];
+                        
+                        // Update frame rate when metadata is loaded
+                        remoteVideo.onloadedmetadata = () => {{
+                            addDebug("Video metadata loaded: " + remoteVideo.videoWidth + "x" + remoteVideo.videoHeight);
+                            if (metaResolution) metaResolution.textContent = "Resolution: " + remoteVideo.videoWidth + "x" + remoteVideo.videoHeight;
+                        }};
+                        
+                        remoteVideo.play().then(() => {{
+                            addDebug("Video playback started");
+                            setConnectionStatus("✅ Stream playing", "rgba(34, 197, 94, 0.9)");
+                            
+                            // Start stats monitoring
+                            if (statsInterval) clearInterval(statsInterval);
+                            statsInterval = setInterval(() => updateStats(pc), 1000);
+                        }}).catch(e => {{
+                            remoteVideo.muted = true;
+                            remoteVideo.play().then(() => {{
+                                setConnectionStatus("✅ Stream playing (muted)", "rgba(34, 197, 94, 0.9)");
+                                if (statsInterval) clearInterval(statsInterval);
+                                statsInterval = setInterval(() => updateStats(pc), 1000);
+                            }}).catch(e2 => {{
+                                addDebug("Play error: " + e2.message);
+                                setConnectionStatus("❌ Play error", "rgba(239, 68, 68, 0.9)");
+                            }});
+                        }});
+                    }} else if (event.track) {{
+                        let stream = remoteVideo.srcObject;
+                        if (!stream) {{
+                            stream = new MediaStream();
+                            remoteVideo.srcObject = stream;
+                        }}
+                        stream.addTrack(event.track);
+                        remoteVideo.play().catch(e => addDebug("Play error: " + e.message));
+                    }}
+                }};
+                
+                pc.onconnectionstatechange = () => {{
+                    addDebug("Connection state: " + pc.connectionState);
+                    
+                    if (pc.connectionState === "connected") {{
+                        setConnectionStatus("✅ Connected", "rgba(34, 197, 94, 0.9)");
+                    }} else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {{
+                        setConnectionStatus("❌ " + pc.connectionState, "rgba(239, 68, 68, 0.9)");
+                        if (statsInterval) clearInterval(statsInterval);
+                    }}
+                }};
+                
+                window.fullscreenWebRTC = {{ pc: pc, ws: ws, statsInterval: statsInterval, telemetryChannel: telemetryChannel }};
+            }};
+            
+            ws.onmessage = async (event) => {{
+                const message = JSON.parse(event.data);
+                addDebug("Received: " + message.type);
+                
+                if (message.type === "offer") {{
+                    await pc.setRemoteDescription(new RTCSessionDescription(message));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify(pc.localDescription));
+                    addDebug("Sent answer");
+                }} else if (message.type === "answer") {{
+                    await pc.setRemoteDescription(new RTCSessionDescription(message));
+                }} else if (message.candidate !== undefined) {{
+                    if (message.candidate === null || message.candidate === "") {{
+                        try {{ await pc.addIceCandidate(null); }} catch (e) {{}}
+                    }} else {{
+                        try {{
+                            const candidateInit = {{
+                                candidate: message.candidate,
+                                sdpMid: message.sdpMid !== undefined ? message.sdpMid : "0",
+                                sdpMLineIndex: message.sdpMLineIndex !== undefined ? message.sdpMLineIndex : 0
+                            }};
+                            await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
+                        }} catch (e) {{
+                            addDebug("ICE error: " + e.message);
+                        }}
+                    }}
+                }}
+            }};
+            
+            ws.onerror = (error) => {{
+                addDebug("WebSocket error: " + error);
+                setConnectionStatus("❌ WebSocket error", "rgba(239, 68, 68, 0.9)");
+            }};
+            
+            ws.onclose = () => {{
+                addDebug("WebSocket closed");
+                setConnectionStatus("⚫ Disconnected", "rgba(107, 114, 128, 0.9)");
+                if (statsInterval) clearInterval(statsInterval);
+            }};
+            
+            // Cleanup on page unload
+            window.addEventListener("beforeunload", () => {{
+                if (statsInterval) clearInterval(statsInterval);
+                if (window.fullscreenWebRTC) {{
+                    if (window.fullscreenWebRTC.ws) window.fullscreenWebRTC.ws.close();
+                    if (window.fullscreenWebRTC.pc) window.fullscreenWebRTC.pc.close();
+                }}
+            }});
+        }})();
+        ''')
     
     # ========================================================================
     # OVERRIDE PARENT CALLBACKS TO EMIT EVENTS
@@ -583,10 +1109,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 dialog.close()
                 self._takeoff_confirmation_dialog_open = False
                 # Play takeoff confirmation sound
-                ui.run_javascript('''
-                    var audio = new Audio("/static/take_off.mp3");
-                    audio.play().catch(function(e) { console.log("Audio play failed:", e); });
-                ''')
+                self._play_sound('take_off.mp3')
                 # Call the mission controller callback
                 if hasattr(self, '_relay_takeoff_callback') and self._relay_takeoff_callback:
                     self._relay_takeoff_callback(True)
@@ -1273,15 +1796,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         if action == 'countdown_start':
             # Play 20-second countdown audio
-            ui.run_javascript('''
-                // Stop any existing countdown audio first
-                if (window.countdownAudio) {
-                    window.countdownAudio.pause();
-                    window.countdownAudio.currentTime = 0;
-                }
-                window.countdownAudio = new Audio("/static/20_seconds.mp3");
-                window.countdownAudio.play().catch(function(e) { console.log("Countdown audio play failed:", e); });
-            ''')
+            self._play_sound('20_seconds.mp3')
             self._emit_log(f"[ALERT] ⏱️ 20-SECOND COUNTDOWN STARTED - RTH will trigger if separation not restored!")
             return
         
@@ -1294,10 +1809,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     window.countdownAudio.currentTime = 0;
                     window.countdownAudio = null;
                 }
-                // Play separation respected sound
-                var audio = new Audio("/static/vertical_separation_respected.mp3");
-                audio.play().catch(function(e) { console.log("Respected audio play failed:", e); });
             ''')
+            self._play_sound('vertical_separation_respected.mp3')
             self._emit_log(f"[ALERT] ✅ VERTICAL SEPARATION RESTORED - Countdown cancelled!")
             return
         
@@ -1332,10 +1845,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         alt2 = alert.get('alt2', 0)
         
         # Play warning sound (not the countdown)
-        ui.run_javascript('''
-            var audio = new Audio("/static/vertical_separation.mp3");
-            audio.play().catch(function(e) { console.log("Audio play failed:", e); });
-        ''')
+        self._play_sound('vertical_separation.mp3')
         
         # Show critical notification
         ui.notify(
@@ -1632,6 +2142,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             with ui.row().classes('items-center gap-3 w-full'):
                 ui.image('/static/logo.png').classes('w-16 h-16')
                 ui.label("WildPerpetua").classes('text-2xl font-bold').style('flex-grow: 1')
+                self.silent_toggle = ui.button(icon='volume_up', on_click=self._toggle_silent_mode).props('flat dense').tooltip('Toggle Silent Mode')
                 self.debug_toggle = ui.button(icon='bug_report', on_click=self._toggle_debug_mode).props('flat dense').tooltip('Toggle ROS Console')
                 ui.button(icon='restart_alt', on_click=self._restart_groundstation).props('flat dense color=negative').tooltip('Restart Groundstation')
             
@@ -2048,14 +2559,29 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self.drone_labels[namespace]['recording'] = ui.label("REC" if drone.is_recording else "OFF").classes('text-lg font-bold').style('color: #c62828;' if drone.is_recording else 'color: #bdbdbd;')
                         self.drone_labels[namespace]['recording_icon'] = rec_icon
                 
-                # Right: Gimbal knob (centered vertically and horizontally)
-                with ui.column().classes('items-center justify-center').style('min-width: 90px'):
-                    gimbal_knob = ui.knob(min=-90, max=0, value=0, step=5, show_value=True).props('size="80px" thickness=0.20 color="primary" font-size="16px"').tooltip('Gimbal Pitch')
+                # Right: Gimbal knob and Zoom slider
+                with ui.row().classes('items-center justify-center gap-4').style('min-width: 200px'):
+                    # Gimbal knob
+                    with ui.column().classes('items-center'):
+                        gimbal_knob = ui.knob(min=-90, max=0, value=0, step=5, show_value=True).props('size="70px" thickness=0.20 color="primary" font-size="14px"').tooltip('Gimbal Pitch')
+                        ui.label('Gimbal').classes('text-xs text-gray-500')
+                        
+                        def update_gimbal(e, ns=namespace):
+                            val = float(e.args)
+                            self.send_gimbal_pitch(ns, val)
+                        gimbal_knob.on('update:model-value', update_gimbal)
                     
-                    def update_gimbal(e, ns=namespace):
-                        val = float(e.args)
-                        self.send_gimbal_pitch(ns, val)
-                    gimbal_knob.on('update:model-value', update_gimbal)
+                    # Zoom slider
+                    with ui.column().classes('items-center').style('min-width: 100px'):
+                        zoom_label = ui.label('1.0x').classes('text-sm font-bold text-primary')
+                        zoom_slider = ui.slider(min=1.0, max=2.0, value=1.0, step=0.1).props('label-always color="primary"').style('width: 100px').tooltip('Camera Zoom (1.0x - 2.0x)')
+                        ui.label('Zoom').classes('text-xs text-gray-500')
+                        
+                        def update_zoom(e, ns=namespace, lbl=zoom_label):
+                            val = float(e.args)
+                            lbl.text = f'{val:.1f}x'
+                            self.send_zoom_ratio(ns, val)
+                        zoom_slider.on('update:model-value', update_zoom)
             
             # RTH Predictor row (only visible when active)
             with ui.row().classes('w-full items-center gap-2 mt-1') as rth_row:
@@ -2075,6 +2601,40 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             # Hidden position label (for data, not display)
             self.drone_labels[namespace]['position'] = ui.label().classes('hidden')
+            
+            # Video feed expansion
+            self.drone_video_visible[namespace] = False  # Initialize as hidden
+            
+            with ui.expansion('📹 Video Feed', icon='videocam').classes('w-full') as video_expansion:
+                def on_expansion_toggle(e, ns=namespace):
+                    # e.args contains the new value (True if expanded, False if collapsed)
+                    is_open = e.args
+                    if is_open:
+                        self.drone_video_visible[ns] = True
+                        self._start_webrtc_stream(ns)
+                    else:
+                        self.drone_video_visible[ns] = False
+                        self._stop_webrtc_stream(ns)
+                
+                video_expansion.on('update:model-value', on_expansion_toggle)
+                
+                # Video feed container
+                self.drone_labels[namespace]['video_container'] = video_expansion
+                
+                # Video player with fullscreen button
+                with ui.row().classes('w-full items-center justify-end mb-1'):
+                    ui.button(icon='open_in_new', on_click=lambda ns=namespace: self._open_video_fullscreen(ns)).props('flat dense').tooltip('Open video in new tab (fullscreen)')
+                
+                video_html = f'''
+                <video id="remoteVideo_{namespace}" autoplay playsinline muted 
+                       style="width: 100%; aspect-ratio: 16/9; border-radius: 8px; background: #000;"></video>
+                '''
+                ui.html(video_html, sanitize=False)
+                
+                # Store references for WebRTC
+                self.drone_labels[namespace]['video_element_id'] = f'remoteVideo_{namespace}'
+                self.drone_labels[namespace]['webrtc_pc'] = None
+                self.drone_labels[namespace]['webrtc_ws'] = None
             
             # All controls in one row with bigger buttons
             with ui.row().classes('w-full gap-1 mt-2'):
@@ -2183,6 +2743,222 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._refresh_drone_list()
         else:
             ui.notify(f'Cannot disconnect {namespace} (may be in flight)', type='warning')
+    
+    def _start_webrtc_stream(self, namespace: str):
+        """Start WebRTC video stream for a drone using native HTML5 video element."""
+        if namespace not in self.drones:
+            ui.notify(f'Drone {namespace} not found', type='warning')
+            return
+        
+        drone = self.drones[namespace]
+        if not drone.ip_address:
+            ui.notify(f'No IP address for {namespace}', type='warning')
+            return
+        
+        if namespace not in self.drone_labels or 'video_element_id' not in self.drone_labels[namespace]:
+            ui.notify(f'Video element not found for {namespace}', type='warning')
+            return
+        
+        ws_url = f"ws://{drone.ip_address}:8082"
+        video_element_id = self.drone_labels[namespace]['video_element_id']
+        
+        # Use ui.run_javascript to execute the WebRTC connection
+        ui.run_javascript(f'''
+        (async function connectStream_{namespace}() {{
+            const namespace = "{namespace}";
+            const wsUrl = "{ws_url}";
+            const remoteVideo = document.getElementById("{video_element_id}");
+            
+            function addDebug(msg) {{
+                console.log("[WebRTC " + namespace + "] " + msg);
+            }}
+            
+            if (!remoteVideo) {{
+                addDebug("Video element not found");
+                return;
+            }}
+            
+            addDebug("Starting connection to " + wsUrl);
+            
+            // Create WebSocket connection for signaling
+            const ws = new WebSocket(wsUrl);
+            let pc = null;
+            
+            ws.onopen = async () => {{
+                addDebug("WebSocket connected");
+                
+                // Setup WebRTC
+                const config = {{
+                    iceServers: [{{ urls: "stun:stun.l.google.com:19302" }}]
+                }};
+                
+                pc = new RTCPeerConnection(config);
+                addDebug("RTCPeerConnection created");
+                
+                pc.onicecandidate = (event) => {{
+                    if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {{
+                        ws.send(JSON.stringify(event.candidate));
+                        addDebug("Sent ICE candidate");
+                    }}
+                }};
+                
+                pc.ontrack = (event) => {{
+                    addDebug("Track received: " + event.track.kind + ", readyState: " + event.track.readyState);
+                    
+                    // Add video element event listeners for debugging
+                    remoteVideo.onloadedmetadata = () => addDebug("Video: loadedmetadata, size: " + remoteVideo.videoWidth + "x" + remoteVideo.videoHeight);
+                    remoteVideo.onloadeddata = () => addDebug("Video: loadeddata");
+                    remoteVideo.oncanplay = () => addDebug("Video: canplay");
+                    remoteVideo.onplaying = () => addDebug("Video: playing");
+                    remoteVideo.onstalled = () => addDebug("Video: stalled");
+                    remoteVideo.onwaiting = () => addDebug("Video: waiting");
+                    remoteVideo.onerror = (e) => addDebug("Video error: " + (remoteVideo.error ? remoteVideo.error.message : e));
+                    
+                    // Monitor track state
+                    event.track.onmute = () => addDebug("Track muted");
+                    event.track.onunmute = () => addDebug("Track unmuted");
+                    event.track.onended = () => addDebug("Track ended");
+                    
+                    if (event.streams && event.streams[0]) {{
+                        addDebug("Stream has " + event.streams[0].getTracks().length + " tracks, stream active: " + event.streams[0].active);
+                        remoteVideo.srcObject = event.streams[0];
+                        addDebug("Set srcObject, video.srcObject active: " + (remoteVideo.srcObject ? remoteVideo.srcObject.active : "null"));
+                        
+                        // Try to play the video
+                        remoteVideo.play().then(() => {{
+                            addDebug("Video playback started");
+                        }}).catch(e => {{
+                            addDebug("Play error: " + e.message);
+                            // Try playing muted (autoplay policy)
+                            remoteVideo.muted = true;
+                            remoteVideo.play().then(() => {{
+                                addDebug("Video playing (muted)");
+                            }}).catch(e2 => addDebug("Play error 2: " + e2.message));
+                        }});
+                    }} else if (event.track) {{
+                        // Fallback: create a new MediaStream from the track
+                        addDebug("Using track directly (no stream)");
+                        let stream = remoteVideo.srcObject;
+                        if (!stream) {{
+                            stream = new MediaStream();
+                            remoteVideo.srcObject = stream;
+                        }}
+                        stream.addTrack(event.track);
+                        remoteVideo.play().catch(e => addDebug("Play error: " + e.message));
+                    }}
+                }};
+                
+                pc.onconnectionstatechange = () => {{
+                    addDebug("Connection state: " + pc.connectionState);
+                }};
+                
+                pc.oniceconnectionstatechange = () => {{
+                    addDebug("ICE connection state: " + pc.iceConnectionState);
+                }};
+                
+                addDebug("Waiting for server offer...");
+                
+                // Store for cleanup
+                window["webrtc_" + namespace] = {{ pc: pc, ws: ws }};
+            }};
+            
+            ws.onmessage = async (event) => {{
+                const message = JSON.parse(event.data);
+                addDebug("Received: " + message.type);
+                
+                if (message.type === "offer") {{
+                    addDebug("Processing offer...");
+                    await pc.setRemoteDescription(new RTCSessionDescription(message));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify(pc.localDescription));
+                    addDebug("Sent answer");
+                }} else if (message.type === "answer") {{
+                    addDebug("Processing answer...");
+                    await pc.setRemoteDescription(new RTCSessionDescription(message));
+                }} else if (message.candidate !== undefined) {{
+                    // Handle ICE candidates
+                    if (message.candidate === null || message.candidate === "") {{
+                        addDebug("Received end-of-candidates signal");
+                        try {{
+                            await pc.addIceCandidate(null);
+                        }} catch (e) {{}}
+                    }} else {{
+                        try {{
+                            // Server may send candidates without sdpMid/sdpMLineIndex
+                            // Default to sdpMid='0' and sdpMLineIndex=0 for video
+                            const candidateInit = {{
+                                candidate: message.candidate,
+                                sdpMid: message.sdpMid !== undefined ? message.sdpMid : "0",
+                                sdpMLineIndex: message.sdpMLineIndex !== undefined ? message.sdpMLineIndex : 0
+                            }};
+                            await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
+                            addDebug("Added ICE candidate");
+                        }} catch (e) {{
+                            addDebug("ICE error: " + e.message);
+                        }}
+                    }}
+                }} else if (message.type === "welcome") {{
+                    addDebug("Server welcome received");
+                }} else {{
+                    addDebug("Unknown message: " + JSON.stringify(message).substring(0, 100));
+                }}
+            }};
+            
+            ws.onerror = (error) => {{
+                addDebug("WebSocket error: " + error);
+            }};
+            
+            ws.onclose = () => {{
+                addDebug("WebSocket closed");
+            }};
+        }})();
+        ''')
+        
+        self._emit_log(f"[VIDEO] Starting WebRTC stream for {namespace} at {ws_url}")
+    
+    def _stop_webrtc_stream(self, namespace: str):
+        """Stop video stream for a drone."""
+        video_element_id = f'remoteVideo_{namespace}'
+        
+        ui.run_javascript(f'''
+        (function() {{
+            try {{
+                const conn = window["webrtc_{namespace}"];
+                if (conn) {{
+                    if (conn.ws) conn.ws.close();
+                    if (conn.pc) conn.pc.close();
+                    window["webrtc_{namespace}"] = null;
+                }}
+                
+                // Clear video element
+                const video = document.getElementById("{video_element_id}");
+                if (video) {{
+                    video.srcObject = null;
+                }}
+                
+                console.log("[WebRTC] Stream stopped for {namespace}");
+            }} catch (error) {{
+                console.error("[WebRTC] Error stopping stream: " + error);
+            }}
+        }})();
+        ''')
+        
+        self._emit_log(f"[VIDEO] Stopped stream for {namespace}")
+    
+    def _open_video_fullscreen(self, namespace: str):
+        """Open WebRTC video stream in a new fullscreen tab."""
+        if namespace not in self.drones:
+            ui.notify(f'Drone {namespace} not found', type='warning')
+            return
+        
+        drone = self.drones[namespace]
+        if not drone.ip_address:
+            ui.notify(f'No IP address for {namespace}', type='warning')
+            return
+        
+        # Open fullscreen video page in new tab
+        ui.navigate.to(f'/video/{namespace}', new_tab=True)
     
     def _pin_drone_location(self, namespace: str):
         """Pin drone's current location as monitoring point and switch to Monitoring Point mode."""
@@ -2672,10 +3448,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             def on_confirm():
                 dialog.close()
                 # Play takeoff confirmation sound
-                ui.run_javascript('''
-                    var audio = new Audio("/static/take_off.mp3");
-                    audio.play().catch(function(e) { console.log("Audio play failed:", e); });
-                ''')
+                self._play_sound('take_off.mp3')
                 # Execute the force swap
                 self._do_force_swap()
             
@@ -2989,6 +3762,33 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.drone_rth_tracking.clear()
         self._refresh_mission_stats_display()
         ui.notify('Mission statistics cleared', type='info')
+    
+    def _toggle_silent_mode(self):
+        """Toggle silent mode (mute all sounds)."""
+        self.silent_mode = not self.silent_mode
+        
+        if self.silent_mode:
+            if self.silent_toggle:
+                self.silent_toggle.props('icon=volume_off color=negative')
+            ui.notify('🔇 Silent mode enabled', type='info')
+            self._emit_log('[AUDIO] Silent mode enabled - all sounds muted')
+        else:
+            if self.silent_toggle:
+                self.silent_toggle.props('icon=volume_up')
+            ui.notify('🔊 Silent mode disabled', type='info')
+            self._emit_log('[AUDIO] Silent mode disabled - sounds enabled')
+    
+    def _play_sound(self, filename: str):
+        """Play a sound file if not in silent mode.
+        
+        Args:
+            filename: Path to sound file relative to /static/ (e.g., 'take_off.mp3')
+        """
+        if not self.silent_mode:
+            ui.run_javascript(f'''
+                var audio = new Audio("/static/{filename}");
+                audio.play().catch(function(e) {{ console.log("Audio play failed:", e); }});
+            ''')
     
     def _toggle_debug_mode(self):
         """Toggle ROS console on/off."""
@@ -3307,10 +4107,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             def on_confirm():
                 dialog.close()
                 # Play takeoff confirmation sound
-                ui.run_javascript('''
-                    var audio = new Audio("/static/take_off.mp3");
-                    audio.play().catch(function(e) { console.log("Audio play failed:", e); });
-                ''')
+                self._play_sound('take_off.mp3')
                 # Start the appropriate mission
                 if self._pending_single_mission:
                     self._pending_single_mission = False

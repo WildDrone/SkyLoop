@@ -1091,6 +1091,11 @@ class PerpetualMonitorNode(Node):
             Float64, f"{namespace}/command/gimbal_yaw", 10
         )
         
+        # Camera zoom command
+        self.drone_publishers[namespace]['zoom_ratio'] = self.create_publisher(
+            Float64, f"{namespace}/command/zoom_ratio", 10
+        )
+        
         # RTH altitude
         self.drone_publishers[namespace]['set_rth_altitude'] = self.create_publisher(
             Float64, f"{namespace}/command/set_rth_altitude", 10
@@ -1348,6 +1353,16 @@ class PerpetualMonitorNode(Node):
             msg = Float64()
             msg.data = yaw
             self.drone_publishers[namespace]['gimbal_yaw'].publish(msg)
+    
+    def send_zoom_ratio(self, namespace: str, zoom: float):
+        """Set camera zoom ratio (1.0 to 2.0)."""
+        if namespace in self.drone_publishers:
+            # Clamp zoom to valid range
+            zoom = max(1.0, min(2.0, zoom))
+            msg = Float64()
+            msg.data = zoom
+            self.drone_publishers[namespace]['zoom_ratio'].publish(msg)
+            self.get_logger().info(f"Zoom ratio command sent to {namespace}: {zoom}x")
     
     def send_goto_yaw(self, namespace: str, yaw: float):
         """Command drone to rotate to a specific heading/yaw."""
