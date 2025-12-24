@@ -257,6 +257,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.safety_buffer_input = None
         self.min_battery_input = None
         self.min_satellites_input = None
+        self.camera_sync_switch = None
         self.trajectory_mode = None
         self.trajectory_speed_slider = None
         self.trajectory_speed_label = None
@@ -1608,6 +1609,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Keep drone_trajectories data so we can redraw if needed
         # Keep drone_is_flying state
         
+        # Prevent browser caching
+        ui.add_head_html('''
+            <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+            <meta http-equiv="Pragma" content="no-cache">
+            <meta http-equiv="Expires" content="0">
+            <script>
+                // Clear browser storage on page load to prevent stale data
+                sessionStorage.clear();
+                localStorage.removeItem('wildperpetua_state');
+            </script>
+        ''')
+        
         # Add CSS and JS (cache-busting with version parameter)
         ui.add_head_html("""
             <script src='/static/arrows.js?v=2'></script>
@@ -2633,6 +2646,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         ui.icon('flag', size='sm').style('color: #1976d2;')
                         ui.label("Mission").classes('text-xs font-bold')
                         ui.space()
+                        self.camera_sync_switch = ui.switch('🔄 Sync', value=True, on_change=self._on_camera_sync_change).props('dense size=xs').tooltip('360° camera sync during relay handoff')
                         self.rosbag_switch = ui.switch('🤖 ROS', value=False, on_change=self._on_rosbag_change).props('dense size=xs').tooltip('Record ROS Bag')
                     # Mode toggle + params in compact grid
                     self.mission_mode_toggle = ui.toggle(
@@ -3628,6 +3642,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             if self.mission_timer_label:
                 self.mission_timer_label.text = "00:00:00"
             
+            # Disable camera sync switch during mission (can only be changed before start)
+            if hasattr(self, 'camera_sync_switch') and self.camera_sync_switch:
+                self.camera_sync_switch.disable()
+            
             # Build state machine display for drones in mission
             self._build_state_machine_display()
             
@@ -3727,6 +3745,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._mission_start_time = None
             if self.mission_timer_label:
                 self.mission_timer_label.text = "00:00:00"
+            
+            # Disable camera sync switch during mission (can only be changed before start)
+            if hasattr(self, 'camera_sync_switch') and self.camera_sync_switch:
+                self.camera_sync_switch.disable()
             
             # Build state machine display for drones in mission
             self._build_state_machine_display()
@@ -3837,8 +3859,25 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.countdown_label.text = "--:--"
         self.active_drone_label.text = "--"
         self.active_drone_label.style('background: #e0e0e0; color: #424242;')
+        
+        # Re-enable camera sync switch (can be changed again for next mission)
+        if hasattr(self, 'camera_sync_switch') and self.camera_sync_switch:
+            self.camera_sync_switch.enable()
+        
         ui.notify('Mission stopped', type='info')
         self._emit_log("Mission stopped - drones returning home")
+    
+    def _on_camera_sync_change(self, e):
+        """Handle camera sync toggle change."""
+        enabled = e.value
+        self.mission_controller.config.camera_sync_enabled = enabled
+        
+        if enabled:
+            ui.notify('🔄 Camera sync enabled (360° rotation during handoff)', type='positive')
+            self._emit_log("[CONFIG] Camera sync rotation ENABLED")
+        else:
+            ui.notify('🔄 Camera sync disabled (10s waits only, no rotation)', type='info')
+            self._emit_log("[CONFIG] Camera sync rotation DISABLED - 10s waits only")
     
     def _on_rosbag_change(self, e):
         """Handle ROS bag recording toggle change."""
@@ -4609,6 +4648,9 @@ def main() -> None:
 
 def ros_main() -> None:
     """Initialize ROS2 and spin the node."""
+    # Reset singleton to ensure fresh state on restart
+    PerpetualMonitorGUI._instance = None
+    
     rclpy.init()
     node = PerpetualMonitorGUI.get_instance()
     try:

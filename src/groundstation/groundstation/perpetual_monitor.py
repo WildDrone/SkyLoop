@@ -931,6 +931,10 @@ class PerpetualMonitorNode(Node):
         if namespace in self.mission.drones_in_mission:
             self.mission.drones_in_mission.remove(namespace)
         
+        # Clear drone from mission controller
+        if hasattr(self, 'mission_controller') and namespace in self.mission_controller.drone_missions:
+            del self.mission_controller.drone_missions[namespace]
+        
         # Clean up RTH predictor (close CSV file first)
         if namespace in self.rth_predictors:
             self.rth_predictors[namespace].close_csv()
@@ -1180,6 +1184,7 @@ class PerpetualMonitorNode(Node):
         if namespace in self.drones:
             self.drones[namespace].waypoint_reached = reached
             if reached:
+                # Handle normal waypoint reached logic
                 self._handle_waypoint_reached(namespace)
     
     def _on_altitude_reached(self, namespace: str, reached: bool):
@@ -1562,6 +1567,7 @@ class PerpetualMonitorNode(Node):
         self.mission.is_active = False
         self.mission.active_drone = ""
         self.mission.next_drone = ""
+        
         self.get_logger().info("Mission stopped, all drones returning home")
     
     # ========================================================================
@@ -1612,7 +1618,8 @@ class PerpetualMonitorNode(Node):
             self.monitoring_point.latitude,
             self.monitoring_point.longitude,
             self.monitoring_point.altitude,
-            bearing
+            self.monitoring_point.heading,
+            self.PID_SPEED
         )
         
         # Record transit start time for travel time estimation

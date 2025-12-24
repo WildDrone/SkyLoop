@@ -112,6 +112,8 @@ class DroneMissionStatus:
     camera_sync_partner_drone: str = ""  # The OTHER drone that should RTH after spin completes
     camera_sync_top_drone_ns: str = ""  # The TOP (higher) drone namespace during sync
     camera_sync_top_drone_previous_gimbal: float = 0.0  # Previous gimbal pitch to restore after sync
+    camera_sync_old_drone_gimbal: float = 0.0  # Old monitoring drone's gimbal pitch to transfer to new drone
+    camera_sync_new_drone_ns: str = ""  # The NEW drone that will continue monitoring after sync
     
     # Non-blocking state machine timers (timestamps)
     state_entry_time: float = 0.0  # When current state was entered
@@ -151,6 +153,9 @@ class RelayMissionConfig:
     min_satellites: int = 8
     max_retry_count: int = 3
     min_vertical_separation: float = 5.0  # meters - minimum safe altitude difference
+    
+    # Camera sync (360° yaw rotation during relay handoff)
+    camera_sync_enabled: bool = True  # If False, skip 360° rotation but keep 10s waits
     
     # Timing
     preflight_wait_seconds: float = 3.0
@@ -866,6 +871,9 @@ class MissionController:
         # Reset vertical separation mission stopped flag for new mission
         self._vertical_separation_mission_stopped = False
         
+        # IMPORTANT: Clear old mission state to prevent stale waypoints
+        self.drone_missions.clear()
+        
         # Initialize all drones
         self.drone_order = drone_list.copy()
         for i, ns in enumerate(drone_list):
@@ -1339,7 +1347,12 @@ class MissionController:
                             sync_mission.camera_sync_next_state = "RTH"
                             sync_mission.camera_sync_partner_drone = ""  # No partner to notify, spinning drone goes RTH itself
                             sync_mission.camera_sync_top_drone_ns = namespace  # New drone is the top drone
+                            sync_mission.camera_sync_new_drone_ns = namespace  # New drone that will continue monitoring
                             self._emit_event(old_ns, f"Lower drone ({old_alt}m) - will do 360° camera sync then RTH")
+                            # Capture old drone's gimbal pitch to transfer to new drone after spin
+                            if self.get_drone_gimbal_pitch:
+                                sync_mission.camera_sync_old_drone_gimbal = self.get_drone_gimbal_pitch(old_ns)
+                                self._emit_event(old_ns, f"Old drone gimbal pitch captured: {sync_mission.camera_sync_old_drone_gimbal:.1f}°")
                             # New drone (top drone) - set gimbal to -90° during sync
                             if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
                                 sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(namespace)
@@ -1353,8 +1366,13 @@ class MissionController:
                             sync_mission.camera_sync_next_state = "MONITORING"
                             sync_mission.camera_sync_partner_drone = old_ns  # Old drone will be sent to RTH after spin
                             sync_mission.camera_sync_top_drone_ns = old_ns  # Old drone is the top drone
+                            sync_mission.camera_sync_new_drone_ns = namespace  # New drone (self) will continue monitoring
                             self._emit_event(namespace, f"Lower drone ({new_alt}m) - will do 360° camera sync then monitor")
                             self._emit_event(old_ns, f"Higher drone ({old_alt}m) - waiting for spin to complete before RTH")
+                            # Capture old drone's gimbal pitch to transfer to new drone after spin
+                            if self.get_drone_gimbal_pitch:
+                                sync_mission.camera_sync_old_drone_gimbal = self.get_drone_gimbal_pitch(old_ns)
+                                self._emit_event(old_ns, f"Old drone gimbal pitch captured: {sync_mission.camera_sync_old_drone_gimbal:.1f}°")
                             # Old drone (top drone) - set gimbal to -90° during sync
                             if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
                                 sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(old_ns)
@@ -1403,20 +1421,28 @@ class MissionController:
                 if elapsed >= wait_before_yaw:
                     mission.camera_sync_yaw_started = True
                     
-                    # Command 360° yaw rotation
-                    if self.cmd_goto_yaw:
+                    # Check if camera sync rotation is enabled
+                    if not self.config.camera_sync_enabled:
+                        # Skip rotation, go directly to completed
+                        self._emit_event(namespace, "Camera sync rotation disabled - skipping 360° yaw")
+                        mission.camera_sync_yaw_phase2_started = True
+                        mission.camera_sync_yaw_completed = True
+                        mission.camera_sync_start_time = time.time()  # Reset timer for post-wait phase
+                        self._update_status(namespace, mission.state, "Camera sync - waiting 10s (rotation skipped)")
+                    elif self.cmd_goto_yaw:
+                        # Command 360° yaw rotation
                         # Calculate target heading: current heading + 360° (full rotation)
                         target_heading = (mission.camera_sync_initial_heading + 360.0) % 360.0
                         # Since we want a full rotation, we'll do it in steps or use a special yaw command
                         # For now, we rotate to initial + 180, then to initial (which completes the circle)
                         self.cmd_goto_yaw(namespace, (mission.camera_sync_initial_heading + 180.0) % 360.0)
                         self._emit_event(namespace, "Starting 360° yaw rotation (phase 1/2)")
+                        self._update_status(namespace, mission.state, "Camera sync - 360° yaw in progress")
+                        mission.camera_sync_start_time = time.time()  # Reset timer for yaw phase
                     else:
                         self._emit_event(namespace, "Warning: cmd_goto_yaw not available, skipping rotation")
                         mission.camera_sync_yaw_completed = True
-                    
-                    self._update_status(namespace, mission.state, "Camera sync - 360° yaw in progress")
-                    mission.camera_sync_start_time = time.time()  # Reset timer for yaw phase
+                        mission.camera_sync_start_time = time.time()  # Reset timer for post-wait phase
             
             # Phase 2a: Monitor yaw progress for first half of rotation (0° -> 180°)
             elif not mission.camera_sync_yaw_phase2_started:
@@ -1480,6 +1506,11 @@ class MissionController:
                         mission.monitoring_start_time = time.time()
                         mission.state_entry_time = 0.0  # Reset for debug mode
                         
+                        # Transfer old drone's gimbal pitch to the new monitoring drone
+                        if self.cmd_set_gimbal_pitch and mission.camera_sync_old_drone_gimbal != 0.0:
+                            self.cmd_set_gimbal_pitch(namespace, mission.camera_sync_old_drone_gimbal)
+                            self._emit_event(namespace, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
+                        
                         # In Free Flight mode, pilot now has control
                         if self.mission_mode == MissionMode.FREE_FLIGHT:
                             self._update_status(namespace, mission.state, "FREE FLIGHT: Camera sync complete, pilot has control")
@@ -1494,11 +1525,6 @@ class MissionController:
                             if partner_ns in self.drone_missions:
                                 partner_mission = self.drone_missions[partner_ns]
                                 self._emit_event(partner_ns, "Spin complete - now departing")
-                                
-                                # Restore top drone's previous gimbal pitch
-                                if self.cmd_set_gimbal_pitch and mission.camera_sync_top_drone_previous_gimbal != 0.0:
-                                    self.cmd_set_gimbal_pitch(partner_ns, mission.camera_sync_top_drone_previous_gimbal)
-                                    self._emit_event(partner_ns, f"Gimbal restored to {mission.camera_sync_top_drone_previous_gimbal:.1f}°")
                                 
                                 # Stop recording on partner
                                 if partner_mission.video_started and self.cmd_stop_recording:
@@ -1528,12 +1554,12 @@ class MissionController:
                             mission.camera_sync_partner_drone = ""
                     else:
                         # This drone goes to RTH (default, it was the departing drone)
-                        # Restore top drone's previous gimbal pitch (new drone that's now monitoring)
-                        if mission.camera_sync_top_drone_ns and self.cmd_set_gimbal_pitch:
-                            top_drone_ns = mission.camera_sync_top_drone_ns
-                            if mission.camera_sync_top_drone_previous_gimbal != 0.0:
-                                self.cmd_set_gimbal_pitch(top_drone_ns, mission.camera_sync_top_drone_previous_gimbal)
-                                self._emit_event(top_drone_ns, f"Gimbal restored to {mission.camera_sync_top_drone_previous_gimbal:.1f}°")
+                        # Transfer old drone's gimbal pitch to the new monitoring drone
+                        if mission.camera_sync_new_drone_ns and self.cmd_set_gimbal_pitch:
+                            new_drone_ns = mission.camera_sync_new_drone_ns
+                            if mission.camera_sync_old_drone_gimbal != 0.0:
+                                self.cmd_set_gimbal_pitch(new_drone_ns, mission.camera_sync_old_drone_gimbal)
+                                self._emit_event(new_drone_ns, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
                         
                         # Stop recording
                         if mission.video_started and self.cmd_stop_recording:
