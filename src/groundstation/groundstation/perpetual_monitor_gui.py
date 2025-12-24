@@ -2314,6 +2314,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     ui.badge('📍 MONITORING', color='blue').classes('text-xs')
                     ui.label('Auto-navigate to point').classes('text-xs text-gray-500')
         
+        # Check if camera sync rotation is enabled
+        camera_sync_enabled = (hasattr(self, 'mission_controller') and 
+                               self.mission_controller.config.camera_sync_enabled)
+        # Use different icon/label based on camera sync setting
+        sync_icon = '360' if camera_sync_enabled else 'timer'
+        sync_label = 'Sync' if camera_sync_enabled else 'Wait'
+        
         # Define states based on mission mode
         if is_free_flight:
             # Free Flight: first drone goes to pilot control after climb
@@ -2329,7 +2336,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),   # First drone waiting for relay to arrive
                 ('TRANSIT_TO_MONITORING', 'flight', 'Relay'),  # Relay drone flying to first drone
                 ('APPROACHING_POINT', 'gps_fixed', 'Appr'),    # Relay drone approaching for handoff
-                ('CAMERA_SYNC', '360', 'Sync'),                # Camera sync before handoff
+                ('CAMERA_SYNC', sync_icon, sync_label),        # Camera sync (360° rotation or wait only)
                 ('RETURNING_HOME', 'home', 'RTH'),
                 ('COMPLETED', 'check_circle', 'Done'),
             ]
@@ -2344,7 +2351,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 ('APPROACHING_POINT', 'gps_fixed', 'Appr'),
                 ('MONITORING', 'videocam', 'Mon'),
                 ('WAITING_FOR_RELAY', 'swap_horiz', 'Wait'),
-                ('CAMERA_SYNC', '360', 'Sync'),
+                ('CAMERA_SYNC', sync_icon, sync_label),        # Camera sync (360° rotation or wait only)
                 ('RETURNING_HOME', 'home', 'RTH'),
                 ('COMPLETED', 'check_circle', 'Done'),
             ]
@@ -2423,6 +2430,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         current_state = mission.state.name
         
+        # Check if camera sync rotation is enabled
+        camera_sync_enabled = (hasattr(self, 'mission_controller') and 
+                               self.mission_controller.config.camera_sync_enabled)
+        sync_icon = '360' if camera_sync_enabled else 'timer'
+        sync_label = 'Camera Sync (360°)' if camera_sync_enabled else 'Camera Sync (wait only)'
+        
         states = [
             ('IDLE', 'hourglass_empty', 'Waiting'),
             ('SETTING_RTH_ALTITUDE', 'height', 'Set RTH Alt'),
@@ -2432,7 +2445,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ('APPROACHING_POINT', 'gps_fixed', 'Approaching'),
             ('MONITORING', 'videocam', 'Monitoring'),
             ('WAITING_FOR_RELAY', 'swap_horiz', 'Waiting Relay'),
-            ('CAMERA_SYNC', '360', 'Camera Sync'),
+            ('CAMERA_SYNC', sync_icon, sync_label),
             ('RETURNING_HOME', 'home', 'RTH'),
             ('COMPLETED', 'check_circle', 'Done'),
         ]
@@ -3878,6 +3891,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         else:
             ui.notify('🔄 Camera sync disabled (10s waits only, no rotation)', type='info')
             self._emit_log("[CONFIG] Camera sync rotation DISABLED - 10s waits only")
+        
+        # Refresh state machine display to show updated icon
+        self._build_state_machine_display()
     
     def _on_rosbag_change(self, e):
         """Handle ROS bag recording toggle change."""
