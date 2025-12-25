@@ -26,3 +26,6 @@ pydantic==2.12.5
 # Utilities
 python-dotenv==1.2.1
 orjson==3.11.4
+
+# Computer Vision / Object Detection
+ultralytics==8.3.241
