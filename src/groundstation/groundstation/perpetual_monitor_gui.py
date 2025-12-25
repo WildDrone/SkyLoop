@@ -258,6 +258,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.min_battery_input = None
         self.min_satellites_input = None
         self.camera_sync_switch = None
+        self.nav_mode_switch = None
+        self.nav_mode_label = None
         self.trajectory_mode = None
         self.trajectory_speed_slider = None
         self.trajectory_speed_label = None
@@ -2617,15 +2619,15 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self.lon_input = ui.input(label='Lon', value='0.0').props('dense outlined').classes('w-full')
                         self.alt_input = ui.input(label='Alt', value='50').props('dense outlined').classes('w-full')
                         self.heading_input = ui.input(label='Hdg', value='0').props('dense outlined').classes('w-full')
-                    # Trajectory speed (inline)
+                    # Navigation mode toggle + speed slider
                     with ui.row().classes('w-full items-center gap-1 mt-1'):
-                        ui.icon('speed', size='xs').style('color: #8e24aa;')
-                        ui.label('Speed:').classes('text-xs text-gray-600')
+                        self.nav_mode_switch = ui.switch('DJI', value=False, on_change=self._on_nav_mode_change).props('dense size=xs').tooltip('OFF=PID | ON=DJI Native')
+                        self.nav_mode_label = ui.label('PID').classes('text-xs font-bold').style('color: #1976d2; min-width: 25px;')
                         self.trajectory_speed_slider = ui.slider(
-                            min=1, max=12, value=10, step=1,
+                            min=1, max=12, value=5, step=1,
                             on_change=self._on_trajectory_speed_change
                         ).props('dense').classes('flex-grow')
-                        self.trajectory_speed_label = ui.label('10').classes('text-xs font-mono font-bold')
+                        self.trajectory_speed_label = ui.label('5 m/s').classes('text-xs font-mono font-bold').style('min-width: 40px;')
                 
                 # Card 2: Vertical Separation (compact)
                 with ui.card().classes('p-2').style('flex: 0.7; background: linear-gradient(135deg, #fff8e1 0%, #ffffff 100%); border-left: 3px solid #ff9800;') as self.vertical_sep_card:
@@ -3659,6 +3661,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             if hasattr(self, 'camera_sync_switch') and self.camera_sync_switch:
                 self.camera_sync_switch.disable()
             
+            # Disable navigation mode switch during mission
+            if hasattr(self, 'nav_mode_switch') and self.nav_mode_switch:
+                self.nav_mode_switch.disable()
+            
             # Build state machine display for drones in mission
             self._build_state_machine_display()
             
@@ -3762,6 +3768,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Disable camera sync switch during mission (can only be changed before start)
             if hasattr(self, 'camera_sync_switch') and self.camera_sync_switch:
                 self.camera_sync_switch.disable()
+            
+            # Disable navigation mode switch during mission
+            if hasattr(self, 'nav_mode_switch') and self.nav_mode_switch:
+                self.nav_mode_switch.disable()
             
             # Build state machine display for drones in mission
             self._build_state_machine_display()
@@ -3877,8 +3887,46 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if hasattr(self, 'camera_sync_switch') and self.camera_sync_switch:
             self.camera_sync_switch.enable()
         
+        # Re-enable navigation mode switch (can be changed again for next mission)
+        if hasattr(self, 'nav_mode_switch') and self.nav_mode_switch:
+            self.nav_mode_switch.enable()
+        
         ui.notify('Mission stopped', type='info')
         self._emit_log("Mission stopped - drones returning home")
+    
+    def _on_nav_mode_change(self, e):
+        """Handle navigation mode toggle change."""
+        use_dji_native = e.value
+        self.mission_controller.use_dji_native = use_dji_native
+        
+        # Update label based on mode (slider range stays 1-12 for both)
+        if use_dji_native:
+            # DJI Native mode
+            if self.nav_mode_label:
+                self.nav_mode_label.text = 'DJI'
+                self.nav_mode_label.style('color: #e65100; min-width: 25px;')  # Orange for DJI
+            # Set default speed for DJI Native
+            if self.trajectory_speed_slider:
+                self.trajectory_speed_slider.set_value(10)
+            if self.trajectory_speed_label:
+                self.trajectory_speed_label.text = '10 m/s'
+            self.DJI_NATIVE_SPEED = 10.0
+            self.mission_controller.dji_native_speed = 10.0  # Sync with mission controller
+            ui.notify('✈️ DJI Native (smoother trajectory)', type='positive')
+            self._emit_log("[CONFIG] Navigation: DJI NATIVE @ 10 m/s")
+        else:
+            # PID mode
+            if self.nav_mode_label:
+                self.nav_mode_label.text = 'PID'
+                self.nav_mode_label.style('color: #1976d2; min-width: 25px;')  # Blue for PID
+            # Set default speed for PID
+            if self.trajectory_speed_slider:
+                self.trajectory_speed_slider.set_value(5)
+            if self.trajectory_speed_label:
+                self.trajectory_speed_label.text = '5 m/s'
+            self.PID_SPEED = 5.0
+            ui.notify('✈️ PID Control (yaw during transit)', type='info')
+            self._emit_log("[CONFIG] Navigation: PID @ 5 m/s")
     
     def _on_camera_sync_change(self, e):
         """Handle camera sync toggle change."""
@@ -3969,14 +4017,17 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self.vertical_sep_disabled_msg.style('display: block;')
     
     def _on_trajectory_mode_change(self, e):
-        """Handle trajectory mode toggle change (deprecated - PID only now)."""
-        # PID is always used now (DJI Native removed for safety)
+        """Handle trajectory mode toggle change (legacy - use nav_mode_switch instead)."""
+        # This is kept for backward compatibility - use nav_mode_switch for new code
         if hasattr(self, 'mission_controller'):
-            self.mission_controller.use_dji_native = False
+            # Value True = DJI Native, False = PID
+            use_dji = e.value if hasattr(e, 'value') else False
+            self.mission_controller.use_dji_native = use_dji
         
         speed = self.trajectory_speed_slider.value if self.trajectory_speed_slider else 10
-        ui.notify(f'Navigation mode: PID ({speed} m/s)', type='info')
-        self._emit_log(f"[CONFIG] Navigation mode set to PID ({speed} m/s)")
+        mode_str = "DJI Native" if self.mission_controller.use_dji_native else "PID"
+        ui.notify(f'Navigation mode: {mode_str} ({speed} m/s)', type='info')
+        self._emit_log(f"[CONFIG] Navigation mode set to {mode_str} ({speed} m/s)")
     
     def _on_trajectory_speed_change(self, e):
         """Handle trajectory speed slider change."""
@@ -3986,9 +4037,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if self.trajectory_speed_label:
             self.trajectory_speed_label.set_text(f'{speed} m/s')
         
-        # Update speed for both modes (self IS the ROS node)
-        self.DJI_NATIVE_SPEED = float(speed)
-        self.PID_SPEED = float(speed)
+        # Update speed for the active navigation mode
+        if hasattr(self, 'mission_controller') and self.mission_controller.use_dji_native:
+            self.DJI_NATIVE_SPEED = float(speed)
+            self.mission_controller.dji_native_speed = float(speed)  # Sync with mission controller
+            self._emit_log(f"[CONFIG] DJI Native speed: {speed} m/s")
+        else:
+            self.PID_SPEED = float(speed)
+            self._emit_log(f"[CONFIG] PID speed: {speed} m/s")
     
     def _on_mission_mode_change(self, e):
         """Handle mission mode toggle change (Monitoring Point vs Free Flight)."""

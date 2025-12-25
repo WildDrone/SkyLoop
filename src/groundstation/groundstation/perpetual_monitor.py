@@ -704,7 +704,7 @@ class PerpetualMonitorNode(Node):
         mc.get_is_recording = lambda ns: self.drones[ns].is_recording if ns in self.drones else False
         mc.get_waypoint_reached = lambda ns: self.drones[ns].waypoint_reached if ns in self.drones else False
         mc.get_altitude_reached = lambda ns: self.drones[ns].altitude_reached if ns in self.drones else False
-        mc.get_configured_speed = lambda: self.PID_SPEED  # Always use PID navigation
+        mc.get_configured_speed = self._get_active_navigation_speed  # Returns speed based on current nav mode
         mc.get_connected_drones = lambda: list(self.drones.keys())
         
         # Status callbacks
@@ -780,6 +780,17 @@ class PerpetualMonitorNode(Node):
         """Handle mission events for logging."""
         self.get_logger().info(f"[{namespace}] {event}")
     
+    def _get_active_navigation_speed(self) -> float:
+        """Get the active navigation speed based on current mode.
+        
+        Returns:
+            Speed in m/s - DJI_NATIVE_SPEED if DJI Native mode is active,
+            otherwise PID_SPEED.
+        """
+        if hasattr(self, 'mission_controller') and self.mission_controller.use_dji_native:
+            return self.DJI_NATIVE_SPEED
+        return self.PID_SPEED
+
     # ========================================================================
     # DRONE CONNECTION MANAGEMENT
     # ========================================================================
@@ -1280,7 +1291,8 @@ class PerpetualMonitorNode(Node):
     def send_goto_waypoint_dji_native(self, namespace: str, lat: float, lon: float, alt: float, speed: float = None):
         """Command a drone to go to a waypoint using DJI Native mode.
         
-        Generates 3 evenly-spaced waypoints along the path for smoother flight.
+        Generates waypoints including current position for DJI native mission.
+        DJI native missions require the first waypoint to be at or near the drone's current position.
         
         Args:
             namespace: Drone namespace
@@ -1298,24 +1310,20 @@ class PerpetualMonitorNode(Node):
             start_lon = drone.longitude
             start_alt = drone.altitude
             
-            # Generate 3 waypoints evenly spaced along the line
-            # Waypoint 1: 1/3 of the way
-            # Waypoint 2: 2/3 of the way  
-            # Waypoint 3: destination
-            waypoints = []
-            for i in range(1, 4):  # 1, 2, 3
-                fraction = i / 3.0
-                wp_lat = start_lat + (lat - start_lat) * fraction
-                wp_lon = start_lon + (lon - start_lon) * fraction
-                wp_alt = start_alt + (alt - start_alt) * fraction
-                waypoints.append((wp_lat, wp_lon, wp_alt))
+            # DJI native mission requires first waypoint at current position
+            # Then we add the destination as second waypoint
+            # Format: [(current_pos), (destination)]
+            waypoints = [
+                (start_lat, start_lon, start_alt),  # First waypoint: current position
+                (lat, lon, alt)                      # Second waypoint: destination
+            ]
             
             # Send as tuple: (speed, waypoints)
             msg = String()
             msg.data = str((speed, waypoints))
             self.drone_publishers[namespace]['goto_trajectory_dji_native'].publish(msg)
             self.drones[namespace].state = DroneState.FLYING_TO_POINT
-            self.get_logger().info(f"Goto waypoint [DJI Native @ {speed}m/s] sent to {namespace}: 3 waypoints to ({lat}, {lon}, {alt})")
+            self.get_logger().info(f"Goto waypoint [DJI Native @ {speed}m/s] sent to {namespace}: from ({start_lat:.6f}, {start_lon:.6f}, {start_alt:.1f}) to ({lat:.6f}, {lon:.6f}, {alt:.1f})")
     
     def send_goto_altitude(self, namespace: str, altitude: float):
         """Command a drone to go to a specific altitude."""

@@ -187,8 +187,11 @@ class MissionController:
         self.relay_state = RelayState.INACTIVE
         self.mission_mode = MissionMode.MONITORING_POINT  # Default to monitoring point mode
         
-        # Navigation mode (DJI Native removed - always use PID)
-        self.use_dji_native = False  # Always False - PID navigation only
+        # Navigation mode: PID (default) or DJI Native trajectory
+        # PID: 5 m/s, includes yaw control during transit
+        # DJI Native: 10 m/s, smoother trajectory, yaw set after arrival
+        self.use_dji_native = False  # False = PID (default), True = DJI Native
+        self.dji_native_speed = 10.0  # Speed for DJI Native mode (m/s)
         
         # Command and event logging
         self._command_log: List[str] = []  # Log of all commands sent
@@ -1286,11 +1289,7 @@ class MissionController:
             distance = float('inf')
             now = time.time()
             
-            # Check waypoint_reached flag
-            if self.get_waypoint_reached and self.get_waypoint_reached(namespace):
-                reached = True
-            
-            # Also check by distance as fallback
+            # Check distance first (most accurate)
             if self.get_drone_position:
                 lat, lon, _ = self.get_drone_position(namespace)
                 target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
@@ -1298,6 +1297,13 @@ class MissionController:
                 distance = self.haversine_distance(lat, lon, target_lat, target_lon)
                 if distance <= self.config.position_tolerance:
                     reached = True
+            
+            # Only use waypoint_reached flag in PID mode as backup
+            # In DJI Native mode, the flag arrives too early (before drone has stabilized)
+            if not reached and not self.use_dji_native:
+                if self.get_waypoint_reached and self.get_waypoint_reached(namespace):
+                    reached = True
+                    self._emit_event(namespace, f"Waypoint reached flag (distance: {distance:.1f}m)")
             
             # Log progress periodically
             if now - mission.last_approach_log_time > 3.0:
@@ -1646,9 +1652,10 @@ class MissionController:
                 namespace,
                 target_lat,
                 target_lon,
-                target_alt
+                target_alt,
+                self.dji_native_speed
             )
-            mode_str = "DJI Native"
+            mode_str = f"DJI Native @ {self.dji_native_speed}m/s"
         
         elif self.cmd_goto_waypoint:
             # PID: includes yaw control, use target heading
@@ -1666,20 +1673,22 @@ class MissionController:
         self._emit_event(namespace, f"Transit to monitoring point ({distance:.0f}m, ~{mission.estimated_travel_time:.0f}s) [{mode_str}] heading={target_heading:.0f}°")
     
     def _send_updated_trajectory(self, namespace: str, mission: DroneMissionStatus):
-        """Send updated waypoint command during transit (for trajectory re-evaluation)."""
+        """Send updated waypoint command during transit (for trajectory re-evaluation).
+        
+        NOTE: This is only used in PID mode. DJI Native mode does not support
+        live trajectory updates - a single mission is uploaded at launch.
+        """
+        # DJI Native doesn't support trajectory updates - ignore
+        if self.use_dji_native:
+            self._emit_event(namespace, "[DJI Native] Trajectory update skipped (not supported)")
+            return
+        
         target_lat = mission.target_lat
         target_lon = mission.target_lon
         target_alt = mission.target_alt
         target_heading = mission.target_heading
         
-        if self.use_dji_native and self.cmd_goto_waypoint_dji_native:
-            self.cmd_goto_waypoint_dji_native(
-                namespace,
-                target_lat,
-                target_lon,
-                target_alt
-            )
-        elif self.cmd_goto_waypoint:
+        if self.cmd_goto_waypoint:
             self.cmd_goto_waypoint(
                 namespace,
                 target_lat,
@@ -1696,10 +1705,17 @@ class MissionController:
         of the drone being replaced, ensuring the replacement drone follows
         any movement of the monitoring drone.
         
+        NOTE: In DJI Native mode, trajectory updates are not supported.
+        The drone follows the single mission uploaded at launch.
+        
         Args:
             namespace: The replacement drone namespace
             mission: The replacement drone's mission status
         """
+        # DJI Native doesn't support live trajectory updates - only one mission at start
+        if self.use_dji_native:
+            return
+        
         if not mission.replacing_drone:
             return
         
