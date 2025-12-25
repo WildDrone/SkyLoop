@@ -1785,7 +1785,7 @@ class MissionController:
         lat, lon, _ = self.get_drone_position(namespace)
         
         # Determine target position for distance calculation
-        # Priority:
+        # Priority
         # 1. Use mission.target_lat/lon if already set (e.g., from relay transit setup)
         # 2. For relay missions, use the monitoring/waiting drone's position
         # 3. Fall back to monitoring point config
