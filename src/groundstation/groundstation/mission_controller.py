@@ -1817,7 +1817,7 @@ class MissionController:
                                 mission.target_lat, mission.target_lon,
                                 target_lat, target_lon
                             )
-                            if target_moved > 5.0:  # Target drone moved more than 5m
+                            if target_moved > 1.0:  # Target drone moved more than 5m
                                 self._emit_event(namespace, f"Target moved {target_moved:.1f}m - updating trajectory")
                                 mission.target_lat = target_lat
                                 mission.target_lon = target_lon
@@ -2309,12 +2309,14 @@ class MissionController:
     
     def get_active_drone(self) -> Optional[str]:
         """Get the currently active drone in relay mission."""
-        if self.current_drone_index < len(self.drone_order):
+        if self.drone_order and self.current_drone_index < len(self.drone_order):
             return self.drone_order[self.current_drone_index]
         return None
     
     def get_next_drone(self) -> Optional[str]:
         """Get the next drone in relay sequence."""
+        if not self.drone_order:
+            return None
         next_index = (self.current_drone_index + 1) % len(self.drone_order)
         if next_index < len(self.drone_order):
             return self.drone_order[next_index]

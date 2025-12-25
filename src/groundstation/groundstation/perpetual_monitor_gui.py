@@ -181,13 +181,24 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.force_swap_button = None  # Button to trigger manual swap
         self.active_drone_label = None
         self.next_drone_label = None
-        self.drones_needed_label = None
+        self.drones_needed_label = None  # Legacy, kept for compatibility
+        self.drones_needed_flying_label = None
+        self.drones_needed_total_label = None
+        self.drones_needed_info_label = None
+        self.drones_needed_status_icon = None
+        self.drones_needed_ready_label = None
         self.relay_alert_label = None
         self.relay_alert_icon = None
         self.relay_alert_container = None
         self.reconnect_label = None
         self.mission_timer_label = None
         self._mission_start_time = None
+        
+        # Segmented progress bar elements
+        self.progress_segment_1 = None  # 0-1 min (LAUNCH - critical)
+        self.progress_segment_2 = None  # 1-3 min (CONNECT - urgent)
+        self.progress_segment_3 = None  # 3-5 min (READY - warning)
+        self.progress_segment_4 = None  # 5+ min (PREPARE - normal)
         self._mission_timer_task = None
         self._manual_swap_active = False  # True when manual swap in progress
         
@@ -2028,26 +2039,29 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     minutes = int(countdown // 60)
                     seconds = int(countdown % 60)
                     self.countdown_label.text = f"{minutes}:{seconds:02d}"
-                    self.countdown_label.style('color: #e65100; font-weight: bold')
+                    self.countdown_label.style('color: #bf360c; font-weight: bold')
                     
                     if self.countdown_progress:
                         self.countdown_progress.value = max(0, min(1, countdown / 300))
                     
+                    # Update segmented progress bar
+                    self._update_countdown_segments(countdown)
+                    
                     # Threshold-based preparation alerts - use the alert container
                     if hasattr(self, 'relay_alert_container') and self.relay_alert_container:
                         if countdown <= 60:  # 1 minute - CONNECT NOW
-                            self.relay_alert_container.style('background: #ffebee; border-left: 4px solid #f44336; display: block;')
-                            self.relay_alert_label.text = f"CONNECT {next_drone} NOW!"
+                            self.relay_alert_container.style('background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%); border: 2px solid #f44336; display: flex;')
+                            self.relay_alert_label.text = f"🚨 CONNECT {next_drone} NOW!"
                             self.relay_alert_label.style('color: #c62828; animation: blink 0.5s infinite')
                             self.relay_alert_icon.style('color: #c62828; animation: blink 0.5s infinite')
                         elif countdown <= 180:  # 3 minutes - GET READY
-                            self.relay_alert_container.style('background: #fff3e0; border-left: 4px solid #ff9800; display: block;')
-                            self.relay_alert_label.text = f"GET {next_drone} READY"
+                            self.relay_alert_container.style('background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border: 2px solid #ff9800; display: flex;')
+                            self.relay_alert_label.text = f"⚠️ GET {next_drone} READY"
                             self.relay_alert_label.style('color: #e65100;')
                             self.relay_alert_icon.style('color: #e65100;')
                         elif countdown <= 300:  # 5 minutes - PREPARE
-                            self.relay_alert_container.style('background: #e8f5e9; border-left: 4px solid #4caf50; display: block;')
-                            self.relay_alert_label.text = f"Prepare {next_drone}"
+                            self.relay_alert_container.style('background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border: 2px solid #4caf50; display: flex;')
+                            self.relay_alert_label.text = f"📋 Prepare {next_drone}"
                             self.relay_alert_label.style('color: #2e7d32;')
                             self.relay_alert_icon.style('color: #2e7d32;')
                         else:
@@ -2495,7 +2509,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 ui.image('/static/logo.png').classes('w-16 h-16')
                 ui.label("WildPerpetua").classes('text-2xl font-bold').style('flex-grow: 1')
                 self.silent_toggle = ui.button(icon='volume_up', on_click=self._toggle_silent_mode).props('flat dense').tooltip('Toggle Silent Mode')
-                self.debug_toggle = ui.button(icon='bug_report', on_click=self._toggle_debug_mode).props('flat dense').tooltip('Toggle ROS Console')
                 ui.button(icon='restart_alt', on_click=self._restart_groundstation).props('flat dense color=negative').tooltip('Restart Groundstation')
             
             ui.separator()
@@ -2525,60 +2538,102 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             ui.separator()
             
-            # Mission Status Card - Compact layout
-            with ui.card().classes('w-full p-3'):
-                # Header row with status indicators inline
-                with ui.row().classes('items-center gap-3 w-full'):
-                    ui.icon('analytics').classes('text-xl text-primary')
-                    ui.label("Mission Status").classes('text-lg font-bold')
-                    ui.space()
-                    self.mission_status_label = ui.label("Inactive").classes('text-sm font-bold px-2 py-1 rounded').style('background: #e0e0e0; color: #424242;')
-                    self.active_drone_label = ui.label("--").classes('text-sm font-bold px-2 py-1 rounded').style('background: #e3f2fd; color: #1565c0;')
+            # Mission Status Card - Modern readable layout
+            with ui.card().classes('w-full p-4').style('background: linear-gradient(135deg, #fafafa 0%, #ffffff 100%); border: 1px solid #e0e0e0;'):
+                # Header row with status badges
+                with ui.row().classes('items-center gap-3 w-full pb-3').style('border-bottom: 1px solid #eeeeee;'):
+                    ui.icon('analytics').classes('text-2xl').style('color: #1976d2;')
+                    ui.label("Mission Status").classes('text-xl font-bold').style('color: #212121; flex-grow: 1;')
+                    self.mission_status_label = ui.label("Inactive").classes('text-sm font-bold px-3 py-1 rounded-full').style('background: #eeeeee; color: #616161;')
+                    self.active_drone_label = ui.label("--").classes('text-sm font-bold px-3 py-1 rounded-full').style('background: #e3f2fd; color: #1565c0;')
                 
-                # Timer and Countdown in one row
-                with ui.row().classes('w-full items-center gap-4 mt-2'):
-                    # Mission duration
-                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #f5f5f5;'):
-                        ui.icon('timer').classes('text-xl text-gray-600')
-                        self.mission_timer_label = ui.label("00:00:00").classes('text-xl font-bold font-mono').style('color: #1976d2;')
+                # Main metrics row - Mission Duration & Relay Countdown
+                with ui.row().classes('w-full items-stretch gap-3 mt-4'):
+                    # Mission Duration Card
+                    with ui.column().classes('items-center justify-center p-4 rounded-lg flex-1').style('background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); min-height: 90px;'):
+                        ui.label("MISSION DURATION").classes('text-xs font-bold tracking-wide').style('color: #1565c0; letter-spacing: 1px;')
+                        self.mission_timer_label = ui.label("00:00:00").classes('text-3xl font-bold font-mono mt-1').style('color: #0d47a1;')
                     
-                    # Relay countdown (hidden during manual swap)
-                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #fff3e0;') as self.countdown_container:
-                        ui.icon('schedule').classes('text-xl').style('color: #e65100;')
-                        self.countdown_label = ui.label("--:--").classes('text-xl font-bold font-mono').style('color: #e65100;')
+                    # Relay Countdown Card
+                    with ui.column().classes('items-center justify-center p-4 rounded-lg flex-1').style('background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); min-height: 90px;') as self.countdown_container:
+                        ui.label("NEXT RELAY").classes('text-xs font-bold tracking-wide').style('color: #e65100; letter-spacing: 1px;')
+                        self.countdown_label = ui.label("--:--").classes('text-3xl font-bold font-mono mt-1').style('color: #bf360c;')
                     
-                    # Force Swap button (always visible, next to countdown)
-                    self.force_swap_button = ui.button('Force Swap', icon='swap_horiz', on_click=self._force_swap_clicked).props('color=warning no-caps dense size=sm').classes('ml-2').tooltip('Manually trigger relay swap')
+                    # Force Swap Button
+                    with ui.column().classes('items-center justify-center'):
+                        self.force_swap_button = ui.button('SWAP', icon='swap_horiz', on_click=self._force_swap_clicked).props('color=warning unelevated').classes('px-4').style('height: 90px; font-weight: bold;').tooltip('Manually trigger relay swap')
                 
-                # Progress bar for countdown
-                self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=orange').classes('mt-1')
+                # Enhanced Progress Bar with phase indicators
+                with ui.column().classes('w-full mt-4 gap-1'):
+                    # Phase labels row
+                    with ui.row().classes('w-full items-center justify-between px-1'):
+                        ui.label("LAUNCH").classes('text-xs font-bold').style('color: #c62828; width: 20%;')
+                        ui.label("CONNECT").classes('text-xs font-bold').style('color: #e65100; width: 20%; text-align: center;')
+                        ui.label("READY").classes('text-xs font-bold').style('color: #f9a825; width: 20%; text-align: center;')
+                        ui.label("PREPARE").classes('text-xs font-bold').style('color: #388e3c; width: 20%; text-align: center;')
+                        ui.label("OK").classes('text-xs font-bold').style('color: #1976d2; width: 20%; text-align: right;')
+                    
+                    # Segmented progress bar container
+                    with ui.row().classes('w-full items-center gap-1').style('height: 24px;'):
+                        # Segment 1: 0-1 min (LAUNCH - critical)
+                        self.progress_segment_1 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #ffcdd2; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                        # Segment 2: 1-3 min (CONNECT - urgent)  
+                        self.progress_segment_2 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #ffe0b2; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                        # Segment 3: 3-5 min (READY - warning)
+                        self.progress_segment_3 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #fff9c4; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                        # Segment 4: 5+ min (PREPARE - normal)
+                        self.progress_segment_4 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #c8e6c9; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                    
+                    # Time markers row
+                    with ui.row().classes('w-full items-center justify-between px-1'):
+                        ui.label("0:00").classes('text-xs').style('color: #9e9e9e; width: 20%;')
+                        ui.label("1:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
+                        ui.label("3:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
+                        ui.label("5:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
+                        ui.label("").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: right;')
                 
-                # Timing breakdown row (hidden by default, shows formula: Countdown = ToRTH - Travel - Buffer)
-                with ui.row().classes('w-full gap-1 mt-1 text-xs').style('display: none;') as self.timing_breakdown_container:
-                    with ui.row().classes('items-center gap-1 p-1 rounded').style('background: #e3f2fd;'):
-                        ui.icon('battery_alert', size='xs').style('color: #1565c0;')
-                        self.remaining_time_label = ui.label("To RTH: --").style('color: #1565c0; font-size: 11px;')
-                    with ui.row().classes('items-center gap-1 p-1 rounded').style('background: #fff3e0;'):
-                        ui.icon('route', size='xs').style('color: #e65100;')
-                        self.travel_time_label = ui.label("Travel: --").style('color: #e65100; font-size: 11px;')
-                    with ui.row().classes('items-center gap-1 p-1 rounded').style('background: #fce4ec;'):
-                        ui.icon('security', size='xs').style('color: #c2185b;')
-                        self.buffer_time_label = ui.label("Buffer: --").style('color: #c2185b; font-size: 11px;')
+                # Hidden original progress (for compatibility)
+                self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback').style('display: none;')
+                
+                # Timing breakdown row (hidden by default)
+                with ui.row().classes('w-full gap-2 mt-3 justify-center').style('display: none;') as self.timing_breakdown_container:
+                    with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #e3f2fd; border: 1px solid #90caf9;'):
+                        ui.icon('battery_alert', size='sm').style('color: #1565c0;')
+                        self.remaining_time_label = ui.label("To RTH: --").classes('text-sm font-medium').style('color: #1565c0;')
+                    with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #fff3e0; border: 1px solid #ffcc80;'):
+                        ui.icon('route', size='sm').style('color: #e65100;')
+                        self.travel_time_label = ui.label("Travel: --").classes('text-sm font-medium').style('color: #e65100;')
+                    with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #fce4ec; border: 1px solid #f48fb1;'):
+                        ui.icon('security', size='sm').style('color: #c2185b;')
+                        self.buffer_time_label = ui.label("Buffer: --").classes('text-sm font-medium').style('color: #c2185b;')
                 
                 # Relay alert (hidden by default)
-                with ui.row().classes('w-full items-center gap-2 mt-2 p-2 rounded').style('background: #fff3e0; border-left: 3px solid #ff9800; display: none;') as self.relay_alert_container:
-                    self.relay_alert_icon = ui.icon('notifications_active').classes('text-xl').style('color: #e65100;')
-                    self.relay_alert_label = ui.label("").classes('font-bold text-sm').style('color: #bf360c;')
+                with ui.row().classes('w-full items-center gap-3 mt-3 p-3 rounded-lg').style('background: linear-gradient(135deg, #fff3e0 0%, #ffecb3 100%); border: 2px solid #ff9800; display: none;') as self.relay_alert_container:
+                    self.relay_alert_icon = ui.icon('notifications_active').classes('text-2xl').style('color: #e65100;')
+                    self.relay_alert_label = ui.label("").classes('font-bold text-base').style('color: #bf360c;')
                 
-                # Bottom row: Battery swap and Drones needed side by side
-                with ui.row().classes('w-full gap-2 mt-2'):
-                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #e8f5e9;'):
-                        ui.icon('battery_charging_full').classes('text-lg').style('color: #2e7d32;')
-                        self.reconnect_label = ui.label("None").classes('text-sm').style('color: #2e7d32;')
+                # Bottom info row: Battery swap and Drones needed
+                with ui.row().classes('w-full gap-3 mt-4'):
+                    with ui.row().classes('items-center gap-3 p-3 rounded-lg flex-1').style('background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border: 1px solid #a5d6a7;'):
+                        ui.icon('battery_charging_full').classes('text-xl').style('color: #2e7d32;')
+                        with ui.column().classes('gap-0'):
+                            ui.label("Battery Swap").classes('text-xs font-bold').style('color: #1b5e20;')
+                            self.reconnect_label = ui.label("None").classes('text-sm font-medium').style('color: #2e7d32;')
                     
-                    with ui.row().classes('items-center gap-2 p-2 rounded flex-1').style('background: #e3f2fd;'):
-                        ui.icon('group').classes('text-lg').style('color: #1565c0;')
-                        self.drones_needed_label = ui.label("--").classes('text-sm').style('color: #1565c0;')
+                    with ui.column().classes('p-3 rounded-lg flex-1 gap-1').style('background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border: 1px solid #90caf9;'):
+                        with ui.row().classes('items-center gap-2'):
+                            ui.icon('group').classes('text-lg').style('color: #1565c0;')
+                            ui.label("Drones Required").classes('text-xs font-bold').style('color: #0d47a1;')
+                        with ui.row().classes('w-full items-center gap-2'):
+                            self.drones_needed_flying_label = ui.label("~--").classes('text-lg font-bold').style('color: #1565c0;')
+                            ui.label("flying").classes('text-xs').style('color: #1976d2;')
+                            ui.label("/").classes('text-sm').style('color: #90caf9;')
+                            self.drones_needed_total_label = ui.label("--").classes('text-lg font-bold').style('color: #0d47a1;')
+                            ui.label("total").classes('text-xs').style('color: #1976d2;')
+                        with ui.row().classes('w-full items-center gap-1'):
+                            self.drones_needed_info_label = ui.label("--").classes('text-xs').style('color: #42a5f5;')
+                            self.drones_needed_status_icon = ui.icon('check_circle').style('font-size: 14px; color: #4caf50;')
+                        self.drones_needed_ready_label = ui.label("-- ready").classes('text-xs font-medium').style('color: #2e7d32;')
             
             ui.separator()
             
@@ -2601,90 +2656,104 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Map click handler
                 self.map.on('map-click', self._on_map_click)
             
-            # Control panels - reorganized into 2 rows for better space usage
-            # Row 1: Monitoring Point + Trajectory/Speed + Vertical Separation + Mission Buttons
-            with ui.row().classes('w-full gap-2 items-stretch mt-2'):
-                # Card 1: Monitoring Point + Trajectory (merged)
-                with ui.card().classes('p-2').style('flex: 1.4; background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%); border-left: 3px solid #e53935;'):
-                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #ffcdd2;'):
-                        ui.icon('place', size='sm').style('color: #e53935;')
-                        ui.label("Navigation").classes('text-xs font-bold')
-                        ui.space()
-                        ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('round dense size=xs color=red').tooltip('Set Point')
-                        ui.button(icon='delete_outline', on_click=self._clear_monitoring_point_ui).props('round dense flat size=xs').tooltip('Clear')
-                        ui.button(icon='cancel', on_click=self._abort_trajectories).props('round dense flat size=xs color=orange').tooltip('Abort Trajectory')
-                    # Monitoring Point coordinates
-                    with ui.grid(columns=4).classes('w-full gap-1 mt-1'):
-                        self.lat_input = ui.input(label='Lat', value='0.0').props('dense outlined').classes('w-full')
-                        self.lon_input = ui.input(label='Lon', value='0.0').props('dense outlined').classes('w-full')
-                        self.alt_input = ui.input(label='Alt', value='50').props('dense outlined').classes('w-full')
-                        self.heading_input = ui.input(label='Hdg', value='0').props('dense outlined').classes('w-full')
-                    # Navigation mode toggle + speed slider
-                    with ui.row().classes('w-full items-center gap-1 mt-1'):
-                        self.nav_mode_switch = ui.switch('DJI', value=False, on_change=self._on_nav_mode_change).props('dense size=xs').tooltip('OFF=PID | ON=DJI Native')
-                        self.nav_mode_label = ui.label('PID').classes('text-xs font-bold').style('color: #1976d2; min-width: 25px;')
-                        self.trajectory_speed_slider = ui.slider(
-                            min=1, max=12, value=5, step=1,
-                            on_change=self._on_trajectory_speed_change
-                        ).props('dense').classes('flex-grow')
-                        self.trajectory_speed_label = ui.label('5 m/s').classes('text-xs font-mono font-bold').style('min-width: 40px;')
+            # Control panels - ultra-compact single row layout
+            with ui.row().classes('w-full gap-1 items-stretch mt-1'):
+                # Card 1: Navigation (compact)
+                with ui.card().classes('p-0').style('flex: 1.3; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
+                    # Header
+                    with ui.row().classes('w-full items-center justify-between').style('background: linear-gradient(135deg, #e53935 0%, #c62828 100%); padding: 6px 10px; min-height: 32px;'):
+                        with ui.row().classes('items-center gap-2'):
+                            ui.icon('navigation').style('color: white; font-size: 16px;')
+                            ui.label("Navigation").classes('text-sm font-bold').style('color: white;')
+                        with ui.row().classes('items-center gap-0'):
+                            ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('round dense size=xs flat').style('color: white; padding: 2px;').tooltip('Set')
+                            ui.button(icon='delete_outline', on_click=self._clear_monitoring_point_ui).props('round dense size=xs flat').style('color: rgba(255,255,255,0.7); padding: 2px;').tooltip('Clear')
+                            ui.button(icon='cancel', on_click=self._abort_trajectories).props('round dense size=xs flat').style('color: #ffab91; padding: 2px;').tooltip('Abort')
+                    
+                    # Content - all in minimal space
+                    with ui.column().classes('w-full gap-0 justify-center').style('padding: 6px; flex: 1;'):
+                        # Inputs row
+                        with ui.row().classes('w-full gap-1'):
+                            self.lat_input = ui.input(label='Lat', value='0.0').props('dense outlined').style('flex: 1;')
+                            self.lon_input = ui.input(label='Lon', value='0.0').props('dense outlined').style('flex: 1;')
+                            self.alt_input = ui.input(label='Alt', value='50').props('dense outlined').style('flex: 0.5;')
+                            self.heading_input = ui.input(label='Hdg', value='0').props('dense outlined').style('flex: 0.4;')
+                        # Mode + Speed row
+                        with ui.row().classes('w-full items-center gap-1 mt-1'):
+                            self.nav_mode_label = ui.label('PID').classes('text-xs font-bold').style('color: #1976d2; background: #e3f2fd; padding: 2px 6px; border-radius: 4px;')
+                            self.nav_mode_switch = ui.switch('DJI', value=False, on_change=self._on_nav_mode_change).props('dense size=xs color=red')
+                            self.trajectory_speed_slider = ui.slider(min=1, max=12, value=5, step=1, on_change=self._on_trajectory_speed_change).props('color=red').classes('flex-1')
+                            self.trajectory_speed_label = ui.label('5 m/s').classes('text-xs font-bold').style('color: #e53935;')
                 
-                # Card 2: Vertical Separation (compact)
-                with ui.card().classes('p-2').style('flex: 0.7; background: linear-gradient(135deg, #fff8e1 0%, #ffffff 100%); border-left: 3px solid #ff9800;') as self.vertical_sep_card:
-                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #ffe0b2;'):
-                        ui.icon('height', size='sm').style('color: #e65100;')
-                        ui.label("Vert. Sep.").classes('text-xs font-bold')
-                        ui.space()
-                        self.vertical_sep_enabled_switch = ui.switch(value=True, on_change=self._on_vertical_sep_toggle).props('dense size=xs').tooltip('Enable/Disable vertical separation check')
-                        self.vertical_sep_status_badge = ui.badge('OK', color='green').classes('text-xs')
-                    # Content container (hideable when disabled)
-                    with ui.column().classes('w-full gap-1') as self.vertical_sep_content:
-                        # Current vs Min in one row
-                        with ui.row().classes('w-full items-center justify-around mt-1'):
-                            with ui.row().classes('items-center gap-1'):
-                                self.vertical_sep_current_label = ui.label('--').classes('text-lg font-bold').style('color: #424242;')
-                            ui.icon('compare_arrows', size='sm').style('color: #bdbdbd;')
+                # Card 2: Vertical Separation (minimal)
+                with ui.card().classes('p-0').style('flex: 0.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;') as self.vertical_sep_card:
+                    # Header
+                    with ui.row().classes('w-full items-center gap-2').style('background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); padding: 6px 10px; min-height: 32px;'):
+                        ui.icon('height').style('color: white; font-size: 16px;')
+                        ui.label("Vertical Sep.").classes('text-sm font-bold').style('color: white;')
+                    
+                    # Content
+                    with ui.column().classes('w-full items-center justify-center gap-1').style('padding: 6px; flex: 1;') as self.vertical_sep_content:
+                        # Toggle + Badge row
+                        with ui.row().classes('w-full items-center justify-center gap-2'):
+                            self.vertical_sep_enabled_switch = ui.switch(value=True, on_change=self._on_vertical_sep_toggle).props('dense size=sm color=orange')
+                            self.vertical_sep_status_badge = ui.badge('N/A', color='grey').classes('text-xs')
+                        # Values row
+                        with ui.row().classes('items-center gap-1'):
+                            self.vertical_sep_current_label = ui.label('--').classes('text-lg font-bold').style('color: #424242;')
+                            ui.icon('compare_arrows').style('font-size: 14px; color: #bdbdbd;')
                             ui.label('5m').classes('text-lg font-bold').style('color: #2e7d32;')
-                        # Drones list (no scroll, all visible)
-                        self.vertical_sep_drones_list = ui.column().classes('w-full gap-0 mt-1')
-                        # Countdown (hidden)
-                        with ui.row().classes('w-full items-center gap-1 p-1 rounded').style('background: #ffebee; border: 1px solid #ef5350; display: none;') as self.vertical_sep_countdown_row:
-                            ui.icon('warning', size='xs').style('color: #c62828;')
+                        self.vertical_sep_drones_list = ui.column().classes('w-full gap-0')
+                        with ui.row().classes('w-full items-center gap-1 p-1 rounded').style('background: #ffebee; display: none;') as self.vertical_sep_countdown_row:
+                            ui.icon('warning').style('font-size: 12px; color: #c62828;')
                             self.vertical_sep_countdown_label = ui.label('RTH: --s').classes('text-xs font-bold').style('color: #c62828;')
                             self.vertical_sep_countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=red size=xs').classes('flex-1')
-                    # Disabled message (hidden by default)
-                    self.vertical_sep_disabled_msg = ui.label('Check disabled').classes('w-full text-center text-sm mt-2').style('color: #9e9e9e; display: none;')
+                    self.vertical_sep_disabled_msg = ui.label('Off').classes('w-full text-center text-xs').style('color: #9e9e9e; display: none; flex: 1; display: flex; align-items: center; justify-content: center;')
                 
-                # Card 3: Mission Control (compact)
-                with ui.card().classes('p-2').style('flex: 1.3; background: linear-gradient(135deg, #e3f2fd 0%, #ffffff 100%); border-left: 3px solid #1976d2;'):
-                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #bbdefb;'):
-                        ui.icon('flag', size='sm').style('color: #1976d2;')
-                        ui.label("Mission").classes('text-xs font-bold')
-                        ui.space()
-                        self.camera_sync_switch = ui.switch('🔄 Sync', value=True, on_change=self._on_camera_sync_change).props('dense size=xs').tooltip('360° camera sync during relay handoff')
-                        self.rosbag_switch = ui.switch('🤖 ROS', value=False, on_change=self._on_rosbag_change).props('dense size=xs').tooltip('Record ROS Bag')
-                    # Mode toggle + params in compact grid
-                    self.mission_mode_toggle = ui.toggle(
-                        {1: '📍 Monitor', 2: '🆓 Free'}, 
-                        value=1,
-                        on_change=self._on_mission_mode_change
-                    ).props('dense spread no-caps size=xs').classes('w-full mt-1')
-                    with ui.grid(columns=4).classes('w-full gap-1 mt-1'):
-                        self.rth_alt_input = ui.input(label='RTH', value='50').props('dense outlined').classes('w-full')
-                        self.safety_buffer_input = ui.input(label='Buf', value='60').props('dense outlined').classes('w-full')
-                        self.min_battery_input = ui.input(label='Bat%', value='30').props('dense outlined').classes('w-full')
-                        self.min_satellites_input = ui.input(label='Sats', value='8').props('dense outlined').classes('w-full')
-                    with ui.row().classes('w-full gap-1 mt-1'):
-                        ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=xs').style('flex: 1;')
-                        ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=xs').style('flex: 1;')
-                        ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=xs').style('flex: 1;')
+                # Card 3: Mission (larger)
+                with ui.card().classes('p-0').style('flex: 1.4; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
+                    # Header
+                    with ui.row().classes('w-full items-center justify-between').style('background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%); padding: 6px 10px; min-height: 32px;'):
+                        with ui.row().classes('items-center gap-2'):
+                            ui.icon('flag').style('color: white; font-size: 16px;')
+                            ui.label("Mission").classes('text-sm font-bold').style('color: white;')
+                        with ui.row().classes('items-center gap-2'):
+                            # ROS Bag recording toggle
+                            with ui.row().classes('items-center gap-1 px-2 rounded').style('background: rgba(255,255,255,0.2);'):
+                                ui.icon('fiber_manual_record').style('color: white; font-size: 14px;')
+                                self.rosbag_switch = ui.switch('ROS Bag', value=False, on_change=self._on_rosbag_change).props('dense size=xs color=red dark')
+                            # Camera sync toggle
+                            with ui.row().classes('items-center gap-1 px-2 rounded').style('background: rgba(255,255,255,0.2);'):
+                                ui.icon('videocam').style('color: white; font-size: 14px;')
+                                self.camera_sync_switch = ui.switch('Sync', value=True, on_change=self._on_camera_sync_change).props('dense size=xs color=white dark')
+                    
+                    # Content
+                    with ui.column().classes('w-full gap-1 justify-center').style('padding: 8px; flex: 1;'):
+                        # Row 1: Mode toggle (bigger)
+                        with ui.row().classes('w-full items-center gap-2'):
+                            self.mission_mode_label = ui.label('📍 Monitor').classes('text-sm font-bold').style('color: #1976d2; background: #e3f2fd; padding: 4px 10px; border-radius: 6px; min-width: 80px; text-align: center;')
+                            self.mission_mode_switch = ui.switch('Free', value=False, on_change=self._on_mission_mode_change).props('size=md color=primary')
+                        # Row 2: Params (bigger inputs)
+                        with ui.row().classes('w-full gap-1'):
+                            self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').style('flex: 1;')
+                            self.safety_buffer_input = ui.input(label='Buffer', value='60').props('dense outlined').style('flex: 1;')
+                            self.min_battery_input = ui.input(label='Min Bat%', value='30').props('dense outlined').style('flex: 1;')
+                            self.min_satellites_input = ui.input(label='Min Sat', value='8').props('dense outlined').style('flex: 0.8;')
+                        # Row 3: Buttons (bigger)
+                        with ui.row().classes('w-full gap-2 mt-1'):
+                            ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=sm').style('flex: 1;')
+                            ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=sm').style('flex: 1;')
+                            ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=sm').style('flex: 1;')
                 
                 # Card 4: State Machine (compact)
-                with ui.card().classes('p-2').style('flex: 1.5; background: linear-gradient(135deg, #e8f5e9 0%, #ffffff 100%); border-left: 3px solid #43a047;'):
-                    with ui.row().classes('items-center gap-1 pb-1').style('border-bottom: 1px solid #c8e6c9;'):
-                        ui.icon('account_tree', size='sm').style('color: #43a047;')
-                        ui.label("State Machine").classes('text-xs font-bold')
-                    self.state_machine_container = ui.column().classes('w-full gap-0 mt-1')
+                with ui.card().classes('p-0').style('flex: 1.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
+                    # Header
+                    with ui.row().classes('w-full items-center gap-2').style('background: linear-gradient(135deg, #43a047 0%, #388e3c 100%); padding: 6px 10px; min-height: 32px;'):
+                        ui.icon('account_tree').style('color: white; font-size: 16px;')
+                        ui.label("State Machine").classes('text-sm font-bold').style('color: white;')
+                    
+                    # Content
+                    self.state_machine_container = ui.column().classes('w-full gap-0 justify-center').style('padding: 6px; flex: 1;')
                     with self.state_machine_container:
                         self._build_state_machine_display()
             
@@ -2869,137 +2938,198 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         }).classes('w-full').style('height: 200px;')
 
     def _build_drone_card(self, namespace: str, drone: DroneData):
-        """Build a compact card for a single drone."""
+        """Build an expandable card for a single drone."""
         # Use the drone's assigned color (stored in DroneData)
         color = drone.color if hasattr(drone, 'color') and drone.color else self.drone_colors[0]
         
-        with ui.card().classes('drone-card w-full p-3') as card:
+        with ui.card().classes('drone-card w-full').style('padding: 0; overflow: hidden; border-radius: 12px;') as card:
             self.drone_cards[namespace] = card
             self.drone_labels[namespace] = {}
             self.drone_buttons[namespace] = {}
             
-            # Header: color dot, name, state, battery
-            with ui.row().classes('w-full items-center gap-3'):
-                ui.icon('circle').style(f'color: {color}; font-size: 20px')
-                ui.label(f"{namespace}").classes('font-bold text-xl').style('flex: 1')
-                # Manual flight indicator (shown when NOT in virtual_stick mode)
-                manual_badge = ui.badge('🎮 MANUAL', color='orange').classes('ml-2').tooltip('Pilot has manual control (not virtual stick)')
-                manual_badge.style('display: none')  # Hidden by default
-                self.drone_labels[namespace]['manual_indicator'] = manual_badge
-                self.drone_labels[namespace]['state'] = ui.label(f"{drone.state.value}").classes('text-base px-3 py-1 rounded bg-gray-200')
-                with ui.row().classes('items-center gap-1'):
-                    ui.icon('battery_full').style('font-size: 28px')
-                    self.drone_labels[namespace]['battery'] = ui.label(f"{drone.battery_level:.0f}%").classes('text-lg font-bold')
-            
-            # Telemetry + Gimbal layout: telemetry on left (one line), gimbal centered on right
-            with ui.row().classes('w-full items-center gap-4 mt-2'):
-                # Left: All telemetry stats in one row
-                with ui.row().classes('items-center gap-5 text-base text-gray-700').style('flex: 1'):
-                    with ui.row().classes('items-center gap-0'):
-                        ui.icon('height').style('font-size: 28px')
-                        self.drone_labels[namespace]['altitude'] = ui.label(f"{drone.altitude:.0f}m").classes('text-lg')
-                    with ui.row().classes('items-center gap-0'):
-                        ui.icon('speed').style('font-size: 28px')
-                        self.drone_labels[namespace]['speed'] = ui.label(f"{drone.speed:.1f}m/s").classes('text-lg')
-                    with ui.row().classes('items-center gap-0'):
-                        ui.icon('satellite_alt').style('font-size: 28px')
-                        self.drone_labels[namespace]['satellites'] = ui.label(f"{drone.satellite_count}").classes('text-lg')
-                    with ui.row().classes('items-center gap-0').tooltip('Remaining flight time'):
-                        ui.icon('hourglass_bottom').style('font-size: 28px')
-                        self.drone_labels[namespace]['flight_time'] = ui.label("--:--").classes('text-lg')
-                    with ui.row().classes('items-center gap-1').tooltip('Recording Status'):
-                        rec_icon = ui.icon('videocam').style('font-size: 28px; color: #c62828; animation: blink 1s infinite;' if drone.is_recording else 'font-size: 28px; color: #bdbdbd;')
-                        self.drone_labels[namespace]['recording'] = ui.label("REC" if drone.is_recording else "OFF").classes('text-lg font-bold').style('color: #c62828;' if drone.is_recording else 'color: #bdbdbd;')
-                        self.drone_labels[namespace]['recording_icon'] = rec_icon
+            # ═══════════════════════════════════════════════════════════════
+            # ALWAYS VISIBLE HEADER - Clickable to expand/collapse
+            # ═══════════════════════════════════════════════════════════════
+            with ui.row().classes('w-full items-center justify-between').style(f'background: linear-gradient(135deg, {color}22 0%, {color}11 100%); padding: 10px 14px; border-bottom: 2px solid {color}; cursor: pointer;') as header_row:
+                # Left: Drone identifier + key stats
+                with ui.row().classes('items-center gap-3'):
+                    ui.element('div').style(f'width: 12px; height: 12px; border-radius: 50%; background: {color}; box-shadow: 0 0 6px {color};')
+                    ui.label(f"{namespace}").classes('font-bold text-lg').style('color: #333;')
+                    # Manual flight indicator
+                    manual_badge = ui.badge('🎮', color='orange').tooltip('Manual control')
+                    manual_badge.style('display: none')
+                    self.drone_labels[namespace]['manual_indicator'] = manual_badge
                 
-                # Right: Gimbal knob and Zoom slider
-                with ui.row().classes('items-center justify-center gap-4').style('min-width: 200px'):
-                    # Gimbal knob
-                    with ui.column().classes('items-center'):
-                        gimbal_knob = ui.knob(min=-90, max=0, value=0, step=5, show_value=True).props('size="70px" thickness=0.20 color="primary" font-size="14px"').tooltip('Gimbal Pitch')
-                        ui.label('Gimbal').classes('text-xs text-gray-500')
+                # Center: Quick telemetry stats (always visible)
+                with ui.row().classes('items-center gap-4'):
+                    # Altitude
+                    with ui.row().classes('items-center gap-1'):
+                        ui.icon('height').style('font-size: 18px; color: #1976d2;')
+                        self.drone_labels[namespace]['altitude'] = ui.label(f"{drone.altitude:.0f}m").classes('text-sm font-semibold').style('color: #333;')
+                    # Speed  
+                    with ui.row().classes('items-center gap-1'):
+                        ui.icon('speed').style('font-size: 18px; color: #00897b;')
+                        self.drone_labels[namespace]['speed'] = ui.label(f"{drone.speed:.1f}m/s").classes('text-sm font-semibold').style('color: #333;')
+                    # Satellites
+                    with ui.row().classes('items-center gap-1'):
+                        ui.icon('satellite_alt').style('font-size: 18px; color: #7b1fa2;')
+                        self.drone_labels[namespace]['satellites'] = ui.label(f"{drone.satellite_count}").classes('text-sm font-semibold').style('color: #333;')
+                
+                # Right: State badge, Battery, Expand icon
+                with ui.row().classes('items-center gap-3'):
+                    self.drone_labels[namespace]['state'] = ui.label(f"{drone.state.value}").classes('text-xs font-semibold px-2 py-1 rounded-full').style('background: #e8e8e8; color: #555;')
+                    # Battery display
+                    with ui.row().classes('items-center gap-1').style('background: #f5f5f5; padding: 4px 10px; border-radius: 16px;'):
+                        battery_color = '#4caf50' if drone.battery_level > 50 else '#ff9800' if drone.battery_level > 20 else '#f44336'
+                        ui.icon('battery_full').style(f'font-size: 18px; color: {battery_color};')
+                        self.drone_labels[namespace]['battery'] = ui.label(f"{drone.battery_level:.0f}%").classes('text-sm font-bold').style(f'color: {battery_color};')
+                    # Expand indicator
+                    expand_icon = ui.icon('expand_more').style('font-size: 24px; color: #666; transition: transform 0.3s;')
+                    self.drone_labels[namespace]['expand_icon'] = expand_icon
+            
+            # ═══════════════════════════════════════════════════════════════
+            # EXPANDABLE CONTENT - Hidden by default
+            # ═══════════════════════════════════════════════════════════════
+            with ui.column().classes('w-full gap-3').style('padding: 14px; display: none;') as content_area:
+                self.drone_labels[namespace]['content_area'] = content_area
+                
+                # ─────────────────────────────────────────────────────────────
+                # EXTENDED TELEMETRY - Flight time and Recording
+                # ─────────────────────────────────────────────────────────────
+                with ui.row().classes('w-full gap-2 items-stretch'):
+                    # Flight Time
+                    with ui.row().classes('items-center gap-2').style('flex: 1; background: #f8f9fa; padding: 10px 12px; border-radius: 8px; min-height: 44px;'):
+                        ui.icon('schedule').style('font-size: 20px; color: #f57c00;')
+                        ui.label('Flight Time:').classes('text-xs').style('color: #888;')
+                        self.drone_labels[namespace]['flight_time'] = ui.label("0:00").classes('text-sm font-bold').style('color: #f57c00;')
+                    
+                    # Recording Status
+                    with ui.row().classes('items-center gap-2').style(f'flex: 1; background: {"#ffebee" if drone.is_recording else "#f8f9fa"}; padding: 10px 12px; border-radius: 8px; min-height: 44px;'):
+                        rec_icon = ui.icon('fiber_manual_record').style(f'font-size: 20px; color: {"#c62828" if drone.is_recording else "#bdbdbd"};{"animation: blink 1s infinite;" if drone.is_recording else ""}')
+                        self.drone_labels[namespace]['recording_icon'] = rec_icon
+                        ui.label('Recording:').classes('text-xs').style('color: #888;')
+                        self.drone_labels[namespace]['recording'] = ui.label("REC" if drone.is_recording else "OFF").classes('text-sm font-bold').style(f'color: {"#c62828" if drone.is_recording else "#9e9e9e"};')
+                
+                # ─────────────────────────────────────────────────────────────
+                # CAMERA CONTROLS - Gimbal and Zoom
+                # ─────────────────────────────────────────────────────────────
+                with ui.row().classes('w-full items-stretch gap-3'):
+                    # Gimbal Control
+                    with ui.column().classes('items-center justify-center').style('flex: 1; background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 10px; border-radius: 8px;'):
+                        gimbal_knob = ui.knob(min=-90, max=0, value=0, step=5, show_value=True).props('size="60px" thickness=0.18 color="primary" font-size="12px"').tooltip('Gimbal Pitch')
+                        ui.label('Gimbal').classes('text-xs font-medium mt-1').style('color: #1565c0;')
                         
                         def update_gimbal(e, ns=namespace):
                             val = float(e.args)
                             self.send_gimbal_pitch(ns, val)
                         gimbal_knob.on('update:model-value', update_gimbal)
                     
-                    # Zoom slider
-                    with ui.column().classes('items-center').style('min-width: 100px'):
-                        zoom_label = ui.label('1.0x').classes('text-sm font-bold text-primary')
-                        zoom_slider = ui.slider(min=1.0, max=2.0, value=1.0, step=0.1).props('label-always color="primary"').style('width: 100px').tooltip('Camera Zoom (1.0x - 2.0x)')
-                        ui.label('Zoom').classes('text-xs text-gray-500')
+                    # Zoom Control
+                    with ui.column().classes('items-center justify-center').style('flex: 1; background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); padding: 10px; border-radius: 8px;'):
+                        zoom_label = ui.label('1.0x').classes('text-xl font-bold').style('color: #e65100;')
+                        zoom_slider = ui.slider(min=1.0, max=2.0, value=1.0, step=0.1).props('color="orange"').style('width: 85%;').tooltip('Camera Zoom')
+                        ui.label('Zoom').classes('text-xs font-medium mt-1').style('color: #e65100;')
                         
                         def update_zoom(e, ns=namespace, lbl=zoom_label):
                             val = float(e.args)
                             lbl.text = f'{val:.1f}x'
                             self.send_zoom_ratio(ns, val)
                         zoom_slider.on('update:model-value', update_zoom)
-            
-            # RTH Predictor row (only visible when active)
-            with ui.row().classes('w-full items-center gap-2 mt-1') as rth_row:
-                rth_row.style('display: none')  # Hidden by default
-                self.drone_labels[namespace]['rth_predictor_row'] = rth_row
-                ui.icon('analytics').style('font-size: 20px; color: #1976d2')
-                ui.label('RTH Predictor:').classes('text-sm text-gray-600')
-                with ui.row().classes('items-center gap-1').tooltip('Predicted time until RTH triggers'):
-                    ui.icon('timer').style('font-size: 18px; color: #1976d2')
-                    self.drone_labels[namespace]['rth_predicted'] = ui.label('--:--').classes('text-sm font-bold').style('color: #1976d2')
-                with ui.row().classes('items-center gap-1').tooltip('Battery drain rate'):
-                    ui.icon('trending_down').style('font-size: 18px; color: #f57c00')
-                    self.drone_labels[namespace]['rth_drain_rate'] = ui.label('--%/min').classes('text-sm').style('color: #f57c00')
-                with ui.row().classes('items-center gap-1').tooltip('Data points collected'):
-                    ui.icon('show_chart').style('font-size: 18px; color: #388e3c')
-                    self.drone_labels[namespace]['rth_data_points'] = ui.label('0 pts').classes('text-sm').style('color: #388e3c')
-            
-            # Hidden position label (for data, not display)
-            self.drone_labels[namespace]['position'] = ui.label().classes('hidden')
-            
-            # Video feed expansion
-            self.drone_video_visible[namespace] = False  # Initialize as hidden
-            
-            with ui.expansion('📹 Video Feed', icon='videocam').classes('w-full') as video_expansion:
-                def on_expansion_toggle(e, ns=namespace):
-                    # e.args contains the new value (True if expanded, False if collapsed)
-                    is_open = e.args
-                    if is_open:
-                        self.drone_video_visible[ns] = True
-                        self._start_webrtc_stream(ns)
-                    else:
-                        self.drone_video_visible[ns] = False
-                        self._stop_webrtc_stream(ns)
                 
-                video_expansion.on('update:model-value', on_expansion_toggle)
+                # ─────────────────────────────────────────────────────────────
+                # RTH PREDICTOR (hidden by default)
+                # ─────────────────────────────────────────────────────────────
+                with ui.row().classes('w-full items-center gap-3').style('background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: 8px 12px; border-radius: 8px; display: none;') as rth_row:
+                    self.drone_labels[namespace]['rth_predictor_row'] = rth_row
+                    ui.icon('analytics').style('font-size: 18px; color: #2e7d32;')
+                    ui.label('RTH:').classes('text-xs font-semibold').style('color: #2e7d32;')
+                    with ui.row().classes('items-center gap-1'):
+                        ui.icon('timer').style('font-size: 14px; color: #1565c0;')
+                        self.drone_labels[namespace]['rth_predicted'] = ui.label('--:--').classes('text-xs font-bold').style('color: #1565c0;')
+                    with ui.row().classes('items-center gap-1'):
+                        ui.icon('trending_down').style('font-size: 14px; color: #e65100;')
+                        self.drone_labels[namespace]['rth_drain_rate'] = ui.label('--%/min').classes('text-xs').style('color: #e65100;')
+                    with ui.row().classes('items-center gap-1'):
+                        ui.icon('show_chart').style('font-size: 14px; color: #7b1fa2;')
+                        self.drone_labels[namespace]['rth_data_points'] = ui.label('0 pts').classes('text-xs').style('color: #7b1fa2;')
                 
-                # Video feed container
-                self.drone_labels[namespace]['video_container'] = video_expansion
+                # Hidden position label
+                self.drone_labels[namespace]['position'] = ui.label().classes('hidden')
                 
-                # Video player with fullscreen button
-                with ui.row().classes('w-full items-center justify-end mb-1'):
-                    ui.button(icon='open_in_new', on_click=lambda ns=namespace: self._open_video_fullscreen(ns)).props('flat dense').tooltip('Open video in new tab (fullscreen)')
+                # ─────────────────────────────────────────────────────────────
+                # VIDEO FEED - Compact inline display
+                # ─────────────────────────────────────────────────────────────
+                self.drone_video_visible[namespace] = False
                 
-                video_html = f'''
-                <video id="remoteVideo_{namespace}" autoplay playsinline muted 
-                       style="width: 100%; aspect-ratio: 16/9; border-radius: 8px; background: #000;"></video>
-                '''
-                ui.html(video_html, sanitize=False)
+                with ui.expansion('Video', icon='videocam').classes('w-full').props('dense').style('border-radius: 6px; background: #fafafa;') as video_expansion:
+                    def on_expansion_toggle(e, ns=namespace):
+                        is_open = e.args
+                        if is_open:
+                            self.drone_video_visible[ns] = True
+                            self._start_webrtc_stream(ns)
+                        else:
+                            self.drone_video_visible[ns] = False
+                            self._stop_webrtc_stream(ns)
+                    
+                    video_expansion.on('update:model-value', on_expansion_toggle)
+                    self.drone_labels[namespace]['video_container'] = video_expansion
+                    
+                    # Centered video container with controls overlay
+                    with ui.column().classes('w-full items-center gap-0').style('position: relative;'):
+                        video_html = f'''
+                        <video id="remoteVideo_{namespace}" autoplay playsinline muted 
+                               style="width: 100%; max-height: 180px; object-fit: contain; border-radius: 6px; background: #1a1a1a; display: block; margin: 0 auto;"></video>
+                        '''
+                        ui.html(video_html, sanitize=False)
+                        
+                        # Overlay controls at bottom-right
+                        with ui.row().classes('items-center gap-1').style('position: absolute; bottom: 8px; right: 8px;'):
+                            ui.button(icon='open_in_new', on_click=lambda ns=namespace: self._open_video_fullscreen(ns)).props('flat dense round size=sm').style('background: rgba(0,0,0,0.5); color: white;').tooltip('Fullscreen')
+                    
+                    self.drone_labels[namespace]['video_element_id'] = f'remoteVideo_{namespace}'
+                    self.drone_labels[namespace]['webrtc_pc'] = None
+                    self.drone_labels[namespace]['webrtc_ws'] = None
                 
-                # Store references for WebRTC
-                self.drone_labels[namespace]['video_element_id'] = f'remoteVideo_{namespace}'
-                self.drone_labels[namespace]['webrtc_pc'] = None
-                self.drone_labels[namespace]['webrtc_ws'] = None
+                # ─────────────────────────────────────────────────────────────
+                # ACTION BUTTONS
+                # ─────────────────────────────────────────────────────────────
+                with ui.row().classes('w-full items-center justify-between gap-2').style('flex-wrap: wrap;'):
+                    # Flight Controls
+                    with ui.row().classes('items-center gap-1'):
+                        ui.button(icon='flight_takeoff', on_click=lambda ns=namespace: self.send_takeoff(ns)).props('flat dense round').classes('bg-blue-50').tooltip('Take Off').style('width: 36px; height: 36px;')
+                        ui.button(icon='flight_land', on_click=lambda ns=namespace: self.send_land(ns)).props('flat dense round').classes('bg-blue-50').tooltip('Land').style('width: 36px; height: 36px;')
+                        ui.button(icon='home', on_click=lambda ns=namespace: self.send_rth(ns)).props('flat dense round').classes('bg-amber-50').tooltip('RTH').style('width: 36px; height: 36px;')
+                    
+                    # Recording
+                    with ui.row().classes('items-center gap-1'):
+                        ui.button(icon='videocam', on_click=lambda ns=namespace: self.send_start_recording(ns)).props('flat dense round color=red').tooltip('Record').style('width: 36px; height: 36px;')
+                        ui.button(icon='stop', on_click=lambda ns=namespace: self.send_stop_recording(ns)).props('flat dense round').classes('bg-gray-100').tooltip('Stop').style('width: 36px; height: 36px;')
+                    
+                    # Mission
+                    with ui.row().classes('items-center gap-1'):
+                        ui.button(icon='push_pin', on_click=lambda ns=namespace: self._pin_drone_location(ns)).props('flat dense round color=purple').tooltip('Pin').style('width: 36px; height: 36px;')
+                        self.drone_buttons[namespace]['ready'] = ui.button(icon='check_circle', on_click=lambda ns=namespace: self._mark_drone_ready(ns)).props('flat dense round color=green').tooltip('Ready').style('width: 36px; height: 36px;')
+                    
+                    # Danger
+                    with ui.row().classes('items-center gap-1'):
+                        ui.button(icon='warning', on_click=lambda ns=namespace: self.send_abort_mission(ns)).props('flat dense round color=negative').tooltip('Abort').style('width: 36px; height: 36px;')
+                        ui.button(icon='link_off', on_click=lambda ns=namespace: self._disconnect_drone_ui(ns)).props('flat dense round color=negative').tooltip('Disconnect').style('width: 36px; height: 36px;')
             
-            # All controls in one row with bigger buttons
-            with ui.row().classes('w-full gap-1 mt-2'):
-                ui.button(icon='flight_takeoff', on_click=lambda ns=namespace: self.send_takeoff(ns)).props('flat').tooltip('Take Off')
-                ui.button(icon='flight_land', on_click=lambda ns=namespace: self.send_land(ns)).props('flat').tooltip('Land')
-                ui.button(icon='home', on_click=lambda ns=namespace: self.send_rth(ns)).props('flat').tooltip('Return to Home')
-                ui.button(icon='warning', on_click=lambda ns=namespace: self.send_abort_mission(ns)).props('flat color=negative').tooltip('Abort Mission')
-                ui.button(icon='videocam', on_click=lambda ns=namespace: self.send_start_recording(ns)).props('flat color=red').tooltip('Start Recording')
-                ui.button(icon='stop', on_click=lambda ns=namespace: self.send_stop_recording(ns)).props('flat').tooltip('Stop Recording')
-                ui.button(icon='push_pin', on_click=lambda ns=namespace: self._pin_drone_location(ns)).props('flat color=purple').tooltip('📍 Pin current location (Free Flight → Monitoring Point)')
-                self.drone_buttons[namespace]['ready'] = ui.button(icon='check_circle', on_click=lambda ns=namespace: self._mark_drone_ready(ns)).props('flat color=green').tooltip('Mark as Ready (battery swapped)')
-                ui.button(icon='link_off', on_click=lambda ns=namespace: self._disconnect_drone_ui(ns)).props('flat color=negative').tooltip('Disconnect')
+            # Toggle expand/collapse on header click
+            self.drone_labels[namespace]['is_expanded'] = False
+            
+            def toggle_expand(e, ns=namespace):
+                content = self.drone_labels[ns]['content_area']
+                icon = self.drone_labels[ns]['expand_icon']
+                self.drone_labels[ns]['is_expanded'] = not self.drone_labels[ns]['is_expanded']
+                if self.drone_labels[ns]['is_expanded']:
+                    content.style('padding: 14px; display: flex; flex-direction: column; gap: 12px;')
+                    icon.style('font-size: 24px; color: #666; transition: transform 0.3s; transform: rotate(180deg);')
+                else:
+                    content.style('padding: 14px; display: none;')
+                    icon.style('font-size: 24px; color: #666; transition: transform 0.3s; transform: rotate(0deg);')
+            
+            header_row.on('click', toggle_expand)
             
             # Create arrow on map
             self._add_drone_arrow(namespace, drone.latitude, drone.longitude, drone.heading, color)
@@ -3515,7 +3645,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _update_drones_needed(self):
         """Update the estimate of drones needed for continuous coverage."""
-        if self.drones_needed_label and self.monitoring_point.is_set:
+        if self.drones_needed_flying_label and self.monitoring_point.is_set:
             result = self.mission_controller.calculate_drones_needed()
             simultaneous, total, travel_time, distance, has_actual_data = result
             
@@ -3530,26 +3660,55 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             is_fallback = (distance == 3000 and travel_time == 300)
             
             # Indicator for estimate source
-            source_indicator = "📊" if has_actual_data else "~"  # 📊 = actual data, ~ = estimated
+            source_prefix = "" if has_actual_data else "~"  # ~ = estimated
             
             if is_fallback:
-                self.drones_needed_label.text = f"Waiting for drone GPS... ({connected} connected)"
-                self.drones_needed_label.style('color: white;')
+                # Waiting for GPS data
+                self.drones_needed_flying_label.set_text("--")
+                self.drones_needed_total_label.set_text("--")
+                self.drones_needed_info_label.set_text(f"Waiting for GPS...")
+                self.drones_needed_info_label.style('color: #90caf9;')
+                self.drones_needed_status_icon.props('name=hourglass_empty')
+                self.drones_needed_status_icon.style('font-size: 14px; color: #90caf9;')
+                self.drones_needed_ready_label.set_text(f"{connected} connected")
+                self.drones_needed_ready_label.style('color: #1976d2;')
             elif simultaneous == float('inf'):
-                self.drones_needed_label.text = f"Point too far! ({distance_km:.1f}km, {travel_min}:{travel_sec:02d} travel)"
-                self.drones_needed_label.style('color: #c62828;')  # error red
+                # Point too far
+                self.drones_needed_flying_label.set_text("∞")
+                self.drones_needed_total_label.set_text("∞")
+                self.drones_needed_info_label.set_text(f"Too far! {distance_km:.1f}km")
+                self.drones_needed_info_label.style('color: #c62828;')
+                self.drones_needed_status_icon.props('name=error')
+                self.drones_needed_status_icon.style('font-size: 14px; color: #c62828;')
+                self.drones_needed_ready_label.set_text(f"{travel_min}:{travel_sec:02d} travel")
+                self.drones_needed_ready_label.style('color: #ef5350;')
             else:
-                # Show simultaneous (flying) and total (rotation) separately
-                info = f"{source_indicator}{simultaneous} flying, {total} total ({distance_km:.1f}km, {travel_min}min)"
+                # Normal display
+                self.drones_needed_flying_label.set_text(f"{source_prefix}{simultaneous}")
+                self.drones_needed_total_label.set_text(f"{total}")
+                self.drones_needed_info_label.set_text(f"{distance_km:.1f}km, {travel_min}min")
+                
                 if connected >= total:
-                    self.drones_needed_label.text = f"{info} ✓ {connected} ready"
-                    self.drones_needed_label.style('color: #2e7d32;')  # success green
+                    # All good - enough drones
+                    self.drones_needed_info_label.style('color: #42a5f5;')
+                    self.drones_needed_status_icon.props('name=check_circle')
+                    self.drones_needed_status_icon.style('font-size: 14px; color: #4caf50;')
+                    self.drones_needed_ready_label.set_text(f"{connected} ready")
+                    self.drones_needed_ready_label.style('color: #2e7d32;')
                 elif connected >= simultaneous:
-                    self.drones_needed_label.text = f"{info} ⚠ {connected} connected (need {total})"
-                    self.drones_needed_label.style('color: #ef6c00;')  # warning orange
+                    # Warning - minimum for flying, not enough for full rotation
+                    self.drones_needed_info_label.style('color: #42a5f5;')
+                    self.drones_needed_status_icon.props('name=warning')
+                    self.drones_needed_status_icon.style('font-size: 14px; color: #ff9800;')
+                    self.drones_needed_ready_label.set_text(f"{connected}/{total} ready")
+                    self.drones_needed_ready_label.style('color: #ef6c00;')
                 else:
-                    self.drones_needed_label.text = f"{info} ❌ only {connected} (need {simultaneous}+ flying)"
-                    self.drones_needed_label.style('color: #c62828;')  # error red
+                    # Error - not enough drones
+                    self.drones_needed_info_label.style('color: #42a5f5;')
+                    self.drones_needed_status_icon.props('name=cancel')
+                    self.drones_needed_status_icon.style('font-size: 14px; color: #c62828;')
+                    self.drones_needed_ready_label.set_text(f"{connected}/{simultaneous}+ needed")
+                    self.drones_needed_ready_label.style('color: #c62828;')
     
     def _on_map_click(self, e):
         """Handle map click for setting monitoring point."""
@@ -3976,7 +4135,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             except Exception as ex:
                 ui.notify(f'Failed to start recording: {ex}', type='negative')
                 self._emit_log(f"[ROSBAG] Error: {ex}")
-                self.rosbag_switch.value = False
+                if hasattr(self, 'rosbag_switch') and self.rosbag_switch:
+                    self.rosbag_switch.value = False
                 self._rosbag_recording = False
         else:
             # Stop recording
@@ -4050,14 +4210,19 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Handle mission mode toggle change (Monitoring Point vs Free Flight)."""
         from groundstation.mission_controller import MissionMode
         
-        if e.value == 1:
+        # Switch: False = Monitoring Point, True = Free Flight
+        if not e.value:
             mode = MissionMode.MONITORING_POINT
             mode_name = "📍 Monitoring Point"
             mode_desc = "Drone flies to monitoring point and hovers"
+            self.mission_mode_label.set_text('📍 Monitor')
+            self.mission_mode_label.style('color: #1976d2; background: #e3f2fd; padding: 4px 10px; border-radius: 6px; min-width: 80px; text-align: center;')
         else:
             mode = MissionMode.FREE_FLIGHT
             mode_name = "🆓 Free Flight"
             mode_desc = "Pilot controls drone after reaching altitude"
+            self.mission_mode_label.set_text('🆓 Free')
+            self.mission_mode_label.style('color: #7b1fa2; background: #f3e5f5; padding: 4px 10px; border-radius: 6px; min-width: 80px; text-align: center;')
         
         # Update mission controller's mode
         if hasattr(self, 'mission_controller'):
@@ -4075,6 +4240,83 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self.send_abort_mission(namespace)
         ui.notify('All trajectories aborted', type='info')
         self._emit_log("[ABORT] All trajectories aborted")
+    
+    def _update_countdown_segments(self, countdown: float):
+        """Update the segmented countdown progress bar based on current countdown value.
+        
+        Segments represent urgency phases:
+        - Segment 4 (green): 5+ min - PREPARE phase
+        - Segment 3 (yellow): 3-5 min - READY phase  
+        - Segment 2 (orange): 1-3 min - CONNECT phase
+        - Segment 1 (red): 0-1 min - LAUNCH phase (critical)
+        """
+        if not hasattr(self, 'progress_segment_1'):
+            return
+        
+        # Define phase boundaries (in seconds)
+        PHASE_1_END = 60    # 0-1 min: LAUNCH (critical)
+        PHASE_2_END = 180   # 1-3 min: CONNECT (urgent)
+        PHASE_3_END = 300   # 3-5 min: READY (warning)
+        # Phase 4: 5+ min: PREPARE (normal)
+        
+        # Calculate fill for each segment
+        # Segment 1: 0-60s (fills from right to left as countdown decreases)
+        if countdown <= PHASE_1_END:
+            seg1_fill = countdown / PHASE_1_END
+            seg1_color = '#f44336'  # Bright red - active critical
+            seg1_bg = f'linear-gradient(to right, #f44336 {seg1_fill*100}%, #ffcdd2 {seg1_fill*100}%)'
+        else:
+            seg1_fill = 1.0
+            seg1_color = '#ef9a9a'  # Light red - not yet reached
+            seg1_bg = '#ef9a9a'
+        
+        # Segment 2: 60-180s
+        if countdown <= PHASE_1_END:
+            seg2_fill = 0
+            seg2_bg = '#ffcc80'  # Depleted
+        elif countdown <= PHASE_2_END:
+            seg2_fill = (countdown - PHASE_1_END) / (PHASE_2_END - PHASE_1_END)
+            seg2_bg = f'linear-gradient(to right, #ff9800 {seg2_fill*100}%, #ffe0b2 {seg2_fill*100}%)'
+        else:
+            seg2_fill = 1.0
+            seg2_bg = '#ffcc80'  # Not yet reached
+        
+        # Segment 3: 180-300s
+        if countdown <= PHASE_2_END:
+            seg3_fill = 0
+            seg3_bg = '#fff59d'  # Depleted
+        elif countdown <= PHASE_3_END:
+            seg3_fill = (countdown - PHASE_2_END) / (PHASE_3_END - PHASE_2_END)
+            seg3_bg = f'linear-gradient(to right, #fbc02d {seg3_fill*100}%, #fff9c4 {seg3_fill*100}%)'
+        else:
+            seg3_fill = 1.0
+            seg3_bg = '#fff59d'  # Not yet reached
+        
+        # Segment 4: 300s+ (always full when countdown > 300, otherwise proportional)
+        if countdown <= PHASE_3_END:
+            seg4_fill = 0
+            seg4_bg = '#a5d6a7'  # Depleted
+        else:
+            # Cap at 600s (10 min) for visualization
+            max_display = 600
+            seg4_fill = min(1.0, (countdown - PHASE_3_END) / (max_display - PHASE_3_END))
+            seg4_bg = f'linear-gradient(to right, #4caf50 {seg4_fill*100}%, #c8e6c9 {seg4_fill*100}%)'
+        
+        # Apply styles to segments
+        try:
+            self.progress_segment_1._props['innerHTML'] = f'<div style="width: 100%; height: 100%; border-radius: 4px; background: {seg1_bg}; transition: all 0.3s;"></div>'
+            self.progress_segment_1.update()
+            
+            self.progress_segment_2._props['innerHTML'] = f'<div style="width: 100%; height: 100%; border-radius: 4px; background: {seg2_bg}; transition: all 0.3s;"></div>'
+            self.progress_segment_2.update()
+            
+            self.progress_segment_3._props['innerHTML'] = f'<div style="width: 100%; height: 100%; border-radius: 4px; background: {seg3_bg}; transition: all 0.3s;"></div>'
+            self.progress_segment_3.update()
+            
+            self.progress_segment_4._props['innerHTML'] = f'<div style="width: 100%; height: 100%; border-radius: 4px; background: {seg4_bg}; transition: all 0.3s;"></div>'
+            self.progress_segment_4.update()
+        except Exception:
+            pass  # Ignore errors during UI updates
     
     def _update_rth_debug_panel(self, namespace: str, debug_info: dict):
         """Update the RTH prediction debug panel with current values."""
