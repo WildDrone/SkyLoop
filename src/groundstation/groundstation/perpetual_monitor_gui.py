@@ -257,6 +257,18 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.yolo_running: Dict[str, bool] = {}  # {namespace: is_running}
         self.yolo_detections: Dict[str, list] = {}  # {namespace: [detections]}
         
+        # UI update throttling - reduces browser lag by limiting update frequency
+        # Stores last emit time per namespace per event type
+        self._last_emit_time: Dict[str, Dict[str, float]] = {}  # {event_type: {namespace: timestamp}}
+        self._throttle_intervals = {
+            'position': 0.1,      # 10 Hz max (map arrow updates)
+            'heading': 0.1,       # 10 Hz max (arrow rotation)
+            'speed': 0.5,         # 2 Hz max (not critical)
+            'satellites': 1.0,    # 1 Hz max (slow changing)
+            'flight_time': 1.0,   # 1 Hz max (countdown display)
+            'flight_mode': 1.0,   # 1 Hz max (rarely changes)
+        }
+        
         # Connection form elements
         self.ip_input = None
         self.namespace_input = None
@@ -1153,27 +1165,51 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     # OVERRIDE PARENT CALLBACKS TO EMIT EVENTS
     # ========================================================================
     
+    def _should_throttle(self, event_type: str, namespace: str) -> bool:
+        """Check if an event should be throttled based on time since last emit."""
+        if event_type not in self._throttle_intervals:
+            return False  # No throttling for this event type
+        
+        now = time.time()
+        interval = self._throttle_intervals[event_type]
+        
+        if event_type not in self._last_emit_time:
+            self._last_emit_time[event_type] = {}
+        
+        last_time = self._last_emit_time[event_type].get(namespace, 0)
+        if now - last_time < interval:
+            return True  # Throttle this event
+        
+        self._last_emit_time[event_type][namespace] = now
+        return False
+    
     def _on_location(self, namespace: str, msg):
         """Override location callback to emit event."""
         super()._on_location(namespace, msg)
-        self.drone_position_update.emit({
-            'namespace': namespace,
-            'lat': msg.latitude,
-            'lon': msg.longitude,
-            'alt': msg.altitude
-        })
         
-        # Check for RTH landing detection
+        # Throttle position updates to reduce browser load
+        if not self._should_throttle('position', namespace):
+            self.drone_position_update.emit({
+                'namespace': namespace,
+                'lat': msg.latitude,
+                'lon': msg.longitude,
+                'alt': msg.altitude
+            })
+        
+        # Check for RTH landing detection (not throttled - critical for state)
         self._check_rth_landing(namespace, msg.altitude)
     
     def _on_heading(self, namespace: str, heading: float):
         """Override heading callback to emit event."""
         if namespace in self.drones:
             self.drones[namespace].heading = heading
-        self.drone_heading_update.emit({
-            'namespace': namespace,
-            'heading': heading
-        })
+        
+        # Throttle heading updates
+        if not self._should_throttle('heading', namespace):
+            self.drone_heading_update.emit({
+                'namespace': namespace,
+                'heading': heading
+            })
     
     def _on_battery(self, namespace: str, level: float):
         """Override battery callback to emit event."""
@@ -1231,15 +1267,19 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Override flight time callback to emit event."""
         if namespace in self.drones:
             self.drones[namespace].remaining_flight_time = time_remaining
-        self.drone_flight_time_update.emit({
-            'namespace': namespace,
-            'time_remaining': time_remaining
-        })
+        
+        # Throttle flight time updates (1 Hz is sufficient for countdown display)
+        if not self._should_throttle('flight_time', namespace):
+            self.drone_flight_time_update.emit({
+                'namespace': namespace,
+                'time_remaining': time_remaining
+            })
     
     def _on_recording_status(self, namespace: str, is_recording: bool):
         """Override recording status callback to emit event."""
         if namespace in self.drones:
             self.drones[namespace].is_recording = is_recording
+        # Recording status not throttled - state change is important
         self.drone_recording_update.emit({
             'namespace': namespace,
             'is_recording': is_recording
@@ -1249,27 +1289,36 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Override satellite count callback to emit event."""
         if namespace in self.drones:
             self.drones[namespace].satellite_count = count
-        self.drone_satellite_update.emit({
-            'namespace': namespace,
-            'count': count
-        })
+        
+        # Throttle satellite updates (slow changing)
+        if not self._should_throttle('satellites', namespace):
+            self.drone_satellite_update.emit({
+                'namespace': namespace,
+                'count': count
+            })
     
     def _on_speed(self, namespace: str, speed: float):
         """Override speed callback to emit event."""
         if namespace in self.drones:
             self.drones[namespace].speed = speed
-        self.drone_speed_update.emit({
-            'namespace': namespace,
-            'speed': speed
-        })
+        
+        # Throttle speed updates
+        if not self._should_throttle('speed', namespace):
+            self.drone_speed_update.emit({
+                'namespace': namespace,
+                'speed': speed
+            })
     
     def _on_flight_mode(self, namespace: str, mode: str):
         """Override flight mode callback to emit event and track manual control."""
         super()._on_flight_mode(namespace, mode)
-        self.drone_flight_mode_update.emit({
-            'namespace': namespace,
-            'flight_mode': mode
-        })
+        
+        # Throttle flight mode updates (rarely changes)
+        if not self._should_throttle('flight_mode', namespace):
+            self.drone_flight_mode_update.emit({
+                'namespace': namespace,
+                'flight_mode': mode
+            })
     
     def _on_mission_status_update(self, namespace: str, state: MissionState, message: str):
         """Override mission status callback to emit event."""

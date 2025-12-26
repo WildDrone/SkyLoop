@@ -358,6 +358,10 @@ class DroneRTHPredictor:
         
         return max(0.0, time_until_rth)
     
+    def get_datapoints(self) -> int:
+        """Get the number of datapoints collected for the RTH prediction regression."""
+        return len(self.battery_points)
+    
     def get_drain_rate(self) -> float:
         """Get battery drain rate in %/second using one point per battery level."""
         times, batteries = self._get_regression_data()
@@ -706,6 +710,7 @@ class PerpetualMonitorNode(Node):
         mc.get_altitude_reached = lambda ns: self.drones[ns].altitude_reached if ns in self.drones else False
         mc.get_configured_speed = self._get_active_navigation_speed  # Returns speed based on current nav mode
         mc.get_connected_drones = lambda: list(self.drones.keys())
+        mc.get_rth_predictor_datapoints = self._get_rth_predictor_datapoints
         
         # Status callbacks
         mc.on_status_update = self._on_mission_status_update
@@ -742,6 +747,20 @@ class PerpetualMonitorNode(Node):
         # Fallback to DJI's remaining_flight_time when predictor has insufficient data
         # This is critical - without this, returning 0 would trigger immediate RTH!
         return drone.remaining_flight_time
+    
+    def _get_rth_predictor_datapoints(self, namespace: str) -> int:
+        """
+        Get the number of datapoints collected by the RTH predictor for a drone.
+        
+        Args:
+            namespace: The drone's ROS namespace
+            
+        Returns:
+            Number of datapoints (battery level changes) collected
+        """
+        if namespace in self.rth_predictors:
+            return self.rth_predictors[namespace].get_datapoints()
+        return 0
     
     def _on_mission_status_update(self, namespace: str, state: MissionState, message: str):
         """Handle mission status updates from controller."""

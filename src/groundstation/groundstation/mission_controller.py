@@ -128,6 +128,17 @@ class DroneMissionStatus:
     last_transit_log_time: float = 0.0
     last_approach_log_time: float = 0.0
     
+    # Climb time tracking (for Free Flight dynamic travel estimation)
+    climb_start_time: float = 0.0  # When climb started (after takeoff wait)
+    actual_climb_time: float = 0.0  # Measured climb time for this drone
+    
+    # Transit tracking (for Free Flight dynamic travel estimation)
+    horizontal_transit_start_time: float = 0.0  # When horizontal transit started (after climb)
+    horizontal_transit_start_lat: float = 0.0  # Position when transit started
+    horizontal_transit_start_lon: float = 0.0
+    actual_horizontal_transit_time: float = 0.0  # Measured horizontal transit time
+    actual_horizontal_transit_distance: float = 0.0  # Measured horizontal transit distance
+    
     # Error handling
     error_message: str = ""
     retry_count: int = 0
@@ -263,6 +274,7 @@ class MissionController:
         self.get_configured_speed: Optional[Callable[[], float]] = None  # Get UI-configured speed
         self.get_connected_drones: Optional[Callable[[], List[str]]] = None  # Get list of connected drone namespaces
         self.get_flight_mode: Optional[Callable[[str], str]] = None  # Get drone flight mode (for manual control detection)
+        self.get_rth_predictor_datapoints: Optional[Callable[[str], int]] = None  # Get number of RTH predictor datapoints for a drone
         
         # Status callback (for GUI updates)
         self.on_status_update: Optional[Callable[[str, MissionState, str], None]] = None
@@ -286,6 +298,13 @@ class MissionController:
         
         # Flight time history (actual total flight times from completed missions)
         self.flight_time_history: List[float] = []
+        
+        # Free Flight mode: measured data for dynamic travel time estimation
+        # Stored per drone namespace since each drone has different altitude
+        self._ff_measured_climb_times: Dict[str, float] = {}  # namespace -> climb time (seconds)
+        self._ff_measured_transit_speed: float = 0.0  # Measured transit speed (m/s) from first swap
+        self._ff_first_swap_completed: bool = False  # Flag: use estimates vs real data
+        self._ff_last_travel_estimate_update: float = 0.0  # Last time travel estimate was updated
         
         # Mission thread
         self._mission_thread: Optional[threading.Thread] = None
@@ -744,6 +763,109 @@ class MissionController:
             return sum(self.flight_time_history) / len(self.flight_time_history)
         return 0.0
     
+    def _calculate_free_flight_travel_time(self, next_drone_ns: str, current_monitoring_ns: str) -> float:
+        """
+        Calculate estimated travel time for the next drone in Free Flight mode.
+        
+        This method calculates the time needed for the replacement drone to reach
+        the current position of the monitoring drone. It uses:
+        - Before first swap: estimated values (config climb speed + UI transit speed)
+        - After first swap: measured values (actual climb times + measured transit speed)
+        
+        The calculation is updated every 2 seconds because the monitoring drone's
+        position changes as the pilot flies it.
+        
+        Formula: WAIT_AFTER_TAKEOFF + climb_time + WAIT_AFTER_CLIMB + horizontal_transit_time
+        
+        Args:
+            next_drone_ns: Namespace of the drone that will be launched next
+            current_monitoring_ns: Namespace of the currently monitoring drone
+            
+        Returns:
+            Estimated travel time in seconds
+        """
+        WAIT_AFTER_TAKEOFF = 5.0
+        WAIT_AFTER_CLIMB = 5.0
+        
+        # Get next drone's assigned altitude
+        next_mission = self.drone_missions.get(next_drone_ns)
+        if not next_mission:
+            return 120.0  # Fallback
+        
+        next_altitude = next_mission.assigned_altitude
+        
+        # Calculate climb time
+        if self._ff_first_swap_completed and next_drone_ns in self._ff_measured_climb_times:
+            # Use measured climb time for this specific drone (if it has flown before)
+            climb_time = self._ff_measured_climb_times[next_drone_ns]
+        elif self._ff_first_swap_completed and self._ff_measured_climb_times:
+            # Estimate based on measured climb times from other drones
+            # Calculate average climb speed from measurements
+            total_climb_time = 0.0
+            total_altitude = 0.0
+            for ns, ct in self._ff_measured_climb_times.items():
+                mission = self.drone_missions.get(ns)
+                if mission:
+                    total_climb_time += ct
+                    total_altitude += mission.assigned_altitude
+            if total_altitude > 0:
+                avg_climb_speed = total_altitude / total_climb_time
+                climb_time = next_altitude / avg_climb_speed
+            else:
+                climb_time = next_altitude / self.VERTICAL_SPEED
+        else:
+            # Before first swap: use config vertical speed
+            climb_time = next_altitude / self.VERTICAL_SPEED
+        
+        # Calculate horizontal distance from home to current monitoring drone position
+        horizontal_distance = 0.0
+        if self.get_drone_position and self.get_drone_home_position:
+            # Get monitoring drone's current position
+            mon_lat, mon_lon, _ = self.get_drone_position(current_monitoring_ns)
+            # Get home position (where the replacement drone will take off from)
+            home_lat, home_lon = self.get_drone_home_position(next_drone_ns)
+            
+            # Validate GPS positions - reject (0, 0) or invalid coordinates
+            # (0, 0) is in the Gulf of Guinea and would result in ~6000+ km distances
+            monitoring_gps_valid = (mon_lat != 0.0 or mon_lon != 0.0) and abs(mon_lat) <= 90 and abs(mon_lon) <= 180
+            home_gps_valid = (home_lat != 0.0 or home_lon != 0.0) and abs(home_lat) <= 90 and abs(home_lon) <= 180
+            
+            if monitoring_gps_valid and home_gps_valid:
+                horizontal_distance = self.haversine_distance(home_lat, home_lon, mon_lat, mon_lon)
+                
+                # Sanity check: if distance is unreasonably large (> 50 km), GPS data is likely invalid
+                # Normal relay operations should be within a few km
+                if horizontal_distance > 50000:  # 50 km
+                    self._emit_event(next_drone_ns, f"WARNING: Invalid GPS distance ({horizontal_distance/1000:.1f}km) - using fallback")
+                    horizontal_distance = 0.0  # Fall back to no horizontal distance
+            else:
+                # GPS is invalid - log warning and use fallback
+                if not monitoring_gps_valid:
+                    self._emit_event(current_monitoring_ns, f"WARNING: Monitoring drone GPS invalid ({mon_lat:.6f}, {mon_lon:.6f})")
+                if not home_gps_valid:
+                    self._emit_event(next_drone_ns, f"WARNING: Home GPS invalid ({home_lat:.6f}, {home_lon:.6f})")
+        
+        # Calculate horizontal transit time
+        if self._ff_first_swap_completed and self._ff_measured_transit_speed > 0:
+            # Use measured transit speed from first swap
+            transit_speed = self._ff_measured_transit_speed
+        else:
+            # Before first swap: use UI-configured speed
+            if self.get_configured_speed:
+                transit_speed = self.get_configured_speed()
+            else:
+                transit_speed = self.HORIZONTAL_SPEED_PID
+        
+        if transit_speed <= 0:
+            transit_speed = self.HORIZONTAL_SPEED_PID
+        
+        horizontal_time = horizontal_distance / transit_speed if horizontal_distance > 0 else 0
+        
+        # Total travel time
+        total_time = WAIT_AFTER_TAKEOFF + climb_time + WAIT_AFTER_CLIMB + horizontal_time
+        
+        return total_time
+    
     # ========================================================================
     # PREFLIGHT CHECKS
     # ========================================================================
@@ -903,6 +1025,12 @@ class MissionController:
         self._pending_next_drone = ""
         self._pending_next_index = 0
         self._manual_swap_active = False
+        
+        # Reset Free Flight measurement data for new mission
+        self._ff_measured_climb_times.clear()
+        self._ff_measured_transit_speed = 0.0
+        self._ff_first_swap_completed = False
+        self._ff_last_travel_estimate_update = 0.0
         
         # Start mission thread
         if not self._running:
@@ -1166,6 +1294,9 @@ class MissionController:
                 # (includes climb + transit for accurate relay timing estimation)
                 mission.transit_start_time = time.time()
                 
+                # Start climb time measurement for Free Flight mode
+                mission.climb_start_time = time.time()
+                
                 # Transition to climbing and send altitude command
                 mission.state = MissionState.CLIMBING_TO_ALTITUDE
                 mission.state_entry_time = 0.0  # Reset for next state
@@ -1204,6 +1335,14 @@ class MissionController:
                 if not mission.climb_wait_started:
                     mission.climb_wait_started = True
                     mission.state_entry_time = now
+                    
+                    # Measure actual climb time for Free Flight mode
+                    if mission.climb_start_time > 0:
+                        mission.actual_climb_time = now - mission.climb_start_time
+                        # Store in controller for later use (per drone)
+                        self._ff_measured_climb_times[namespace] = mission.actual_climb_time
+                        self._emit_event(namespace, f"Climb completed in {mission.actual_climb_time:.1f}s")
+                    
                     self._emit_event(namespace, f"Altitude reached, stabilizing for {wait_time}s...")
                 elif now - mission.state_entry_time >= wait_time:
                     # Wait elapsed - check mission mode
@@ -1289,14 +1428,26 @@ class MissionController:
             distance = float('inf')
             now = time.time()
             
-            # Check distance first (most accurate)
+            # Calculate current distance to target first (needed for tracking decision)
             if self.get_drone_position:
                 lat, lon, _ = self.get_drone_position(namespace)
                 target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
                 target_lon = mission.target_lon if mission.target_lon != 0 else self.config.monitoring_lon
                 distance = self.haversine_distance(lat, lon, target_lat, target_lon)
-                if distance <= self.config.position_tolerance:
-                    reached = True
+            
+            # FREE FLIGHT MODE: Continue tracking the monitoring drone's live position
+            # until drones are very close (< 2m), because the pilot is actively flying
+            # Update every 0.5s for responsive tracking during final approach
+            FF_TRACKING_STOP_DISTANCE = 2.0  # Stop tracking when within 2 meters
+            if self.mission_mode == MissionMode.FREE_FLIGHT and mission.replacing_drone:
+                if distance > FF_TRACKING_STOP_DISTANCE:
+                    if now - self._last_trajectory_update_time >= 0.5:
+                        self._last_trajectory_update_time = now
+                        self._update_replacement_target(namespace, mission)
+            
+            # Check if reached position tolerance
+            if distance <= self.config.position_tolerance:
+                reached = True
             
             # Only use waypoint_reached flag in PID mode as backup
             # In DJI Native mode, the flag arrives too early (before drone has stabilized)
@@ -1321,8 +1472,33 @@ class MissionController:
                 if len(self.travel_time_history) > 10:
                     self.travel_time_history.pop(0)
                 
+                # Record horizontal transit measurements for Free Flight mode
+                if mission.horizontal_transit_start_time > 0:
+                    mission.actual_horizontal_transit_time = time.time() - mission.horizontal_transit_start_time
+                    if mission.horizontal_transit_start_lat != 0.0 and self.get_drone_position:
+                        current_lat, current_lon, _ = self.get_drone_position(namespace)
+                        mission.actual_horizontal_transit_distance = self.haversine_distance(
+                            mission.horizontal_transit_start_lat,
+                            mission.horizontal_transit_start_lon,
+                            current_lat,
+                            current_lon
+                        )
+                        # Calculate and store measured transit speed for Free Flight
+                        if mission.actual_horizontal_transit_time > 0 and mission.replacing_drone:
+                            measured_speed = mission.actual_horizontal_transit_distance / mission.actual_horizontal_transit_time
+                            self._ff_measured_transit_speed = measured_speed
+                            self._ff_first_swap_completed = True
+                            self._emit_event(namespace, f"FF Transit: {mission.actual_horizontal_transit_distance:.0f}m in {mission.actual_horizontal_transit_time:.1f}s = {measured_speed:.1f}m/s")
+                
                 self._update_status(namespace, mission.state, "Monitoring point reached")
                 self._emit_event(namespace, f"Monitoring started. Travel time: {mission.actual_travel_time:.1f}s")
+                
+                # DJI NATIVE YAW CORRECTION: DJI Native trajectory doesn't control yaw during flight,
+                # so we need to send a separate goto_yaw command after reaching the final waypoint
+                # to match the previous monitoring drone's heading (similar to how gimbal pitch is transferred)
+                if self.use_dji_native and self.cmd_goto_yaw and mission.target_heading != 0.0:
+                    self.cmd_goto_yaw(namespace, mission.target_heading)
+                    self._emit_event(namespace, f"[DJI Native] Yaw correction to {mission.target_heading:.1f}° (matching previous drone)")
                 
                 # RELAY HANDOFF: If this drone was replacing another, determine which drone does camera sync
                 # The LOWEST drone always does the 360° spin for video synchronization
@@ -1607,6 +1783,11 @@ class MissionController:
             
         lat, lon, _ = self.get_drone_position(namespace)
         
+        # Record horizontal transit start position and time for Free Flight measurements
+        mission.horizontal_transit_start_time = time.time()
+        mission.horizontal_transit_start_lat = lat
+        mission.horizontal_transit_start_lon = lon
+        
         # Determine target position
         # Default to configured monitoring point
         target_lat = self.config.monitoring_lat
@@ -1735,12 +1916,12 @@ class MissionController:
         if new_lat == 0.0 and new_lon == 0.0:
             return
         
-        # Check if position has changed significantly (more than 5 meters)
+        # Check if position has changed significantly (more than 1 meters)
         old_lat = mission.relay_target_lat
         old_lon = mission.relay_target_lon
         distance_moved = self.haversine_distance(old_lat, old_lon, new_lat, new_lon)
         
-        if distance_moved < 5.0:
+        if distance_moved < 1.0:
             # Position hasn't changed significantly, no need to update
             return
         
@@ -1899,22 +2080,40 @@ class MissionController:
         if remaining < 30:
             return
         
-        # Calculate when next drone should launch
-        avg_travel = self.get_average_travel_time()
-        if avg_travel == 0:
-            avg_travel = current_mission.estimated_travel_time
-        
-        # In Free Flight mode, the first drone doesn't transit, so estimated_travel_time is 0
-        # Use a minimum travel time estimate (climb + transit) for relay timing
-        if avg_travel == 0 and self.mission_mode == MissionMode.FREE_FLIGHT:
-            # Minimum estimate: ~60s climb + ~60s transit = 120s (conservative)
-            avg_travel = 120.0
-        
-        countdown = remaining - avg_travel - self.config.safety_buffer_seconds
-
-        # Notify UI of countdown
+        # Determine next drone
         next_index = (self.current_drone_index + 1) % len(self.drone_order)
         next_ns = self.drone_order[next_index]
+        
+        # Calculate when next drone should launch
+        if self.mission_mode == MissionMode.FREE_FLIGHT:
+            # FREE FLIGHT MODE: Dynamic travel time calculation updated every 2 seconds
+            # because the monitoring drone's position changes as the pilot flies it
+            
+            # Only start countdown calculation when RTH predictor has at least 3 datapoints
+            # for reliable linear regression (with fewer points, the prediction is unreliable)
+            if self.get_rth_predictor_datapoints:
+                datapoints = self.get_rth_predictor_datapoints(current_ns)
+                if datapoints < 3:
+                    # Not enough data yet - don't calculate or display countdown
+                    return
+            
+            now = time.time()
+            if now - self._ff_last_travel_estimate_update >= 2.0:
+                self._ff_last_travel_estimate_update = now
+            avg_travel = self._calculate_free_flight_travel_time(next_ns, current_ns)
+            
+            # Sanity check: if travel time is unreasonably high (> 30 min), GPS data is likely invalid
+            # This prevents triggering launches based on corrupted position data (e.g., during battery swap)
+            if avg_travel > 1800:  # 30 minutes
+                self._emit_event(next_ns, f"WARNING: Travel time unrealistic ({avg_travel:.0f}s) - GPS data likely invalid, skipping countdown")
+                return  # Don't calculate countdown with invalid data
+        else:
+            # MONITORING POINT MODE: Use historical average or estimation
+            avg_travel = self.get_average_travel_time()
+            if avg_travel == 0:
+                avg_travel = current_mission.estimated_travel_time
+        
+        countdown = remaining - avg_travel - self.config.safety_buffer_seconds
 
         # Build timing breakdown for UI display
         timing_breakdown = {
@@ -2284,20 +2483,32 @@ class MissionController:
         if not self.cmd_set_gimbal_pitch or not self.get_drone_gimbal_pitch:
             return
         
-        # Find the currently monitoring drone (not the incoming one)
-        current_monitoring_ns = None
-        for ns, mission in self.drone_missions.items():
-            if ns != namespace and mission.state == MissionState.MONITORING:
-                current_monitoring_ns = ns
-                break
+        # Find the target drone to sync gimbal from
+        # Priority:
+        # 1. The drone this one is replacing (stored in mission.replacing_drone)
+        # 2. A drone in WAITING_FOR_RELAY state (in Free Flight, it transitions before we arrive)
+        # 3. A drone in MONITORING state (in Monitoring Point mode)
         
-        if current_monitoring_ns:
-            # Get gimbal pitch from currently monitoring drone
-            current_pitch = self.get_drone_gimbal_pitch(current_monitoring_ns)
+        mission = self.drone_missions.get(namespace)
+        target_drone_ns = None
+        
+        # First check if we're replacing a specific drone
+        if mission and mission.replacing_drone:
+            target_drone_ns = mission.replacing_drone
+        else:
+            # Look for drone in WAITING_FOR_RELAY or MONITORING state
+            for ns, m in self.drone_missions.items():
+                if ns != namespace and m.state in [MissionState.WAITING_FOR_RELAY, MissionState.MONITORING]:
+                    target_drone_ns = ns
+                    break
+        
+        if target_drone_ns:
+            # Get gimbal pitch from target drone
+            current_pitch = self.get_drone_gimbal_pitch(target_drone_ns)
             
             # Set the same gimbal pitch on the incoming drone
             self.cmd_set_gimbal_pitch(namespace, current_pitch)
-            self._emit_event(namespace, f"Gimbal pitch synced to {current_pitch:.1f}° from {current_monitoring_ns}")
+            self._emit_event(namespace, f"Gimbal pitch synced to {current_pitch:.1f}° from {target_drone_ns}")
     
     # ========================================================================
     # STATE QUERIES
