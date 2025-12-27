@@ -2074,15 +2074,28 @@ class MissionController:
         
         remaining = self.get_remaining_flight_time(current_ns)
         
+        # Determine next drone (needed for countdown display even during collecting phase)
+        next_index = (self.current_drone_index + 1) % len(self.drone_order)
+        next_ns = self.drone_order[next_index]
+        
+        # Check if RTH predictor is still collecting data (-1 signal)
+        if remaining == -1:
+            # Signal GUI to show "Collecting..." state
+            if self.on_relay_countdown:
+                timing_breakdown = {
+                    'remaining_flight_time': -1,  # Signal collecting state
+                    'avg_travel_time': 0,
+                    'safety_buffer': self.config.safety_buffer_seconds,
+                    'countdown': -1
+                }
+                self.on_relay_countdown(-1, next_ns, timing_breakdown)
+            return
+        
         # Don't process relay logic if remaining flight time is not yet available (0 or very low)
         # This prevents premature relay triggering when DJI data hasn't arrived yet
         # Use a lower threshold (30s) to allow countdown display even with partial data
         if remaining < 30:
             return
-        
-        # Determine next drone
-        next_index = (self.current_drone_index + 1) % len(self.drone_order)
-        next_ns = self.drone_order[next_index]
         
         # Calculate when next drone should launch
         if self.mission_mode == MissionMode.FREE_FLIGHT:

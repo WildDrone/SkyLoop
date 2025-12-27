@@ -128,6 +128,7 @@ class DroneRTHPredictor:
     
     MAX_POINTS = 100  # Max unique battery levels to keep (100% to 0%)
     RTH_TRIGGER_MARGIN = 2  # RTH triggers when battery <= batt_needed_rth + margin
+    MIN_DATAPOINTS = 3  # Minimum battery points needed before using RTH predictor
     
     # Import numpy once at class level
     import numpy as np
@@ -723,12 +724,13 @@ class PerpetualMonitorNode(Node):
         
         Uses RTH predictor when drone is in MONITORING state for accurate relay timing.
         Falls back to DJI's remaining_flight_time when predictor has insufficient data.
+        Returns -1 when collecting data (less than MIN_DATAPOINTS).
         
         Args:
             namespace: The drone's ROS namespace
             
         Returns:
-            Remaining flight time in seconds
+            Remaining flight time in seconds, or -1 if collecting data
         """
         if namespace not in self.drones:
             return 0.0
@@ -738,6 +740,11 @@ class PerpetualMonitorNode(Node):
         # Use RTH predictor when drone is in MONITORING state
         if drone.state == DroneState.MONITORING and namespace in self.rth_predictors:
             predictor = self.rth_predictors[namespace]
+            
+            # Check if we have enough datapoints for prediction
+            if predictor.get_datapoints() < DroneRTHPredictor.MIN_DATAPOINTS:
+                return -1  # Signal: still collecting data
+            
             predicted_time = predictor.predict_rth_time()
             
             # Return prediction if valid (not infinity and reasonable)

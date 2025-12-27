@@ -1877,7 +1877,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             # Show/hide the RTH predictor row based on active state
             if 'rth_predictor_row' in labels:
-                if is_active and data_points >= 2:
+                if is_active and data_points >= 3:  # MIN_DATAPOINTS = 3
                     labels['rth_predictor_row'].style('display: flex')
                 else:
                     labels['rth_predictor_row'].style('display: none')
@@ -2055,18 +2055,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Check if manual swap just completed - restore UI
             if self._manual_swap_active and self.mission_controller and not self.mission_controller.is_manual_swap_active():
                 self._manual_swap_active = False
-                # Restore countdown display
-                if self.countdown_container:
-                    self.countdown_container.style('display: flex; background: #fff3e0;')
                 # Restore force swap button
                 if self.force_swap_button:
                     self.force_swap_button.props(remove='disabled')
-                    self.force_swap_button.text = 'Force Swap'
+                    self.force_swap_button.text = 'SWAP'
                 self._emit_log("[SWAP] Swap completed - returning to automatic countdown mode")
             
-            # Don't update countdown display if manual swap is in progress
-            if self._manual_swap_active:
-                return
+            # Continue updating countdown display even during manual swap
+            # (User wants to see the countdown of the monitoring drone)
             
             # Update timing breakdown display
             if timing_breakdown and hasattr(self, 'timing_breakdown_container'):
@@ -2076,15 +2072,31 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 travel = timing_breakdown.get('avg_travel_time', 0)
                 buffer = timing_breakdown.get('safety_buffer', 0)
                 
-                if hasattr(self, 'remaining_time_label'):
-                    self.remaining_time_label.text = f"To RTH: {int(remaining//60)}:{int(remaining%60):02d}"
-                if hasattr(self, 'travel_time_label'):
-                    self.travel_time_label.text = f"Travel: {int(travel//60)}:{int(travel%60):02d}"
+                # Handle "Collecting..." state when remaining is -1
+                if remaining == -1:
+                    if hasattr(self, 'remaining_time_label'):
+                        self.remaining_time_label.text = f"To RTH: --:--"
+                    if hasattr(self, 'travel_time_label'):
+                        self.travel_time_label.text = f"Travel: --:--"
+                else:
+                    if hasattr(self, 'remaining_time_label'):
+                        self.remaining_time_label.text = f"To RTH: {int(remaining//60)}:{int(remaining%60):02d}"
+                    if hasattr(self, 'travel_time_label'):
+                        self.travel_time_label.text = f"Travel: {int(travel//60)}:{int(travel%60):02d}"
                 if hasattr(self, 'buffer_time_label'):
                     self.buffer_time_label.text = f"Buffer: {int(buffer//60)}:{int(buffer%60):02d}"
             
             if self.countdown_label:
-                if countdown > 0:
+                # Handle "Collecting..." state when countdown is -1
+                if countdown == -1:
+                    self.countdown_label.text = "Collecting..."
+                    self.countdown_label.style('color: #1976d2; font-weight: bold; font-size: 1.3rem;')
+                    if self.countdown_progress:
+                        self.countdown_progress.value = 0
+                    # Hide alert container during collection
+                    if hasattr(self, 'relay_alert_container') and self.relay_alert_container:
+                        self.relay_alert_container.style('display: none;')
+                elif countdown > 0:
                     minutes = int(countdown // 60)
                     seconds = int(countdown % 60)
                     self.countdown_label.text = f"{minutes}:{seconds:02d}"
@@ -2117,7 +2129,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                             self.relay_alert_container.style('display: none;')
                 else:
                     self.countdown_label.text = "LAUNCHING!"
-                    self.countdown_label.style('color: #c62828; font-weight: bold; animation: blink 0.5s infinite')
+                    self.countdown_label.style('color: #c62828; font-weight: bold; animation: blink 0.5s infinite; font-size: 1.5rem;')
                     if hasattr(self, 'relay_alert_container') and self.relay_alert_container:
                         self.relay_alert_container.style('background: #ffebee; border-left: 4px solid #f44336; display: block;')
                         self.relay_alert_label.text = f"LAUNCHING {next_drone}!"
@@ -2694,7 +2706,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _build_right_panel(self):
         """Build the right panel with map and mission control."""
-        with ui.card().classes('h-full').style('flex: 3; display: flex; flex-direction: column;'):
+        with ui.card().classes('h-full').style('flex: 3; display: flex; flex-direction: column; min-width: 0; overflow-x: hidden; overflow-y: auto;'):
             # Map container
             with ui.card().classes('w-full').style('flex: 1; min-height: 400px;'):
                 self.map = ui.leaflet(
@@ -2785,7 +2797,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         # Row 2: Params (bigger inputs)
                         with ui.row().classes('w-full gap-1'):
                             self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').style('flex: 1;')
-                            self.safety_buffer_input = ui.input(label='Buffer', value='60').props('dense outlined').style('flex: 1;')
+                            self.safety_buffer_input = ui.input(label='Buffer', value='60', on_change=self._on_safety_buffer_change).props('dense outlined').style('flex: 1;')
                             self.min_battery_input = ui.input(label='Min Bat%', value='30').props('dense outlined').style('flex: 1;')
                             self.min_satellites_input = ui.input(label='Min Sat', value='8').props('dense outlined').style('flex: 0.8;')
                         # Row 3: Buttons (bigger)
@@ -2809,9 +2821,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Bottom row: Event Log and Mission Statistics side by side (or Debug Console when enabled)
             # Normal view container
             with ui.column().classes('w-full gap-2') as self.normal_logs_container:
-                with ui.row().classes('w-full gap-2 items-stretch'):
+                with ui.row().classes('w-full gap-2 items-stretch').style('min-width: 0;'):
                     # Event Log
-                    with ui.card().classes('p-2').style('flex: 1;'):
+                    with ui.card().classes('p-2').style('flex: 1; min-width: 0; overflow: hidden;'):
                         with ui.row().classes('items-center gap-2 pb-1').style('border-bottom: 1px solid #e0e0e0;'):
                             ui.icon('list_alt').classes('text-lg text-primary')
                             ui.label("Event Log").classes('text-sm font-bold')
@@ -2819,7 +2831,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                             self.event_log = ui.column().classes('w-full gap-0')
                     
                     # Mission Statistics (hidden when debug console is shown)
-                    with ui.card().classes('p-2').style('flex: 1;') as self.mission_stats_card:
+                    with ui.card().classes('p-2').style('flex: 1; min-width: 0; overflow: hidden;') as self.mission_stats_card:
                         with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #e0e0e0;'):
                             ui.icon('analytics').classes('text-lg text-primary')
                             ui.label("Mission Statistics").classes('text-sm font-bold')
@@ -3759,6 +3771,16 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     self.drones_needed_ready_label.set_text(f"{connected}/{simultaneous}+ needed")
                     self.drones_needed_ready_label.style('color: #c62828;')
     
+    def _on_safety_buffer_change(self, e):
+        """Handle safety buffer input change - update config and recalculate drones needed."""
+        try:
+            buffer = float(self.safety_buffer_input.value)
+            if buffer >= 0:
+                self.mission_controller.config.safety_buffer_seconds = buffer
+                self._update_drones_needed()
+        except ValueError:
+            pass  # Invalid input, ignore
+    
     def _on_map_click(self, e):
         """Handle map click for setting monitoring point."""
         try:
@@ -4050,9 +4072,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify(message, type='positive')
             self._emit_log(f"[SWAP] {message}")
             
-            # Hide countdown, show "SWAPPING" status
-            if self.countdown_container:
-                self.countdown_container.style('display: none;')
+            # Update force swap button to show swapping status (countdown continues to update)
             if self.force_swap_button:
                 self.force_swap_button.props('disabled')
                 self.force_swap_button.text = 'Swapping...'
@@ -4402,7 +4422,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Data points
         data_points = debug_info.get('data_points', 0)
         if hasattr(self, 'rth_debug_points'):
-            self.rth_debug_points.text = f"{data_points}"
+            if data_points < 3:
+                self.rth_debug_points.text = f"{data_points}/3 (collecting)"
+                self.rth_debug_points.style('color: #1976d2; font-weight: bold;')
+            else:
+                self.rth_debug_points.text = f"{data_points}"
+                self.rth_debug_points.style('color: inherit; font-weight: normal;')
         
         # Elapsed monitoring time
         elapsed = debug_info.get('elapsed_since_monitoring', 0)
