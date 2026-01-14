@@ -1,0 +1,5142 @@
+{
+  "drone": "drone_2",
+  "recording_start": "2026-01-14T10:26:04.093116",
+  "total_frames": 395,
+  "detections": [
+    {
+      "frame_number": 0,
+      "timestamp": "2026-01-14T10:26:04.151434",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6872643232345581,
+      "bbox": [
+        1,
+        230,
+        912,
+        710
+      ]
+    },
+    {
+      "frame_number": 0,
+      "timestamp": "2026-01-14T10:26:04.151476",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5836552381515503,
+      "bbox": [
+        0,
+        304,
+        132,
+        614
+      ]
+    },
+    {
+      "frame_number": 1,
+      "timestamp": "2026-01-14T10:26:04.207891",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6872643232345581,
+      "bbox": [
+        1,
+        230,
+        912,
+        710
+      ]
+    },
+    {
+      "frame_number": 1,
+      "timestamp": "2026-01-14T10:26:04.207935",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5836552381515503,
+      "bbox": [
+        0,
+        304,
+        132,
+        614
+      ]
+    },
+    {
+      "frame_number": 2,
+      "timestamp": "2026-01-14T10:26:04.275983",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6838506460189819,
+      "bbox": [
+        1,
+        230,
+        912,
+        710
+      ]
+    },
+    {
+      "frame_number": 2,
+      "timestamp": "2026-01-14T10:26:04.276020",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4550672769546509,
+      "bbox": [
+        0,
+        297,
+        101,
+        611
+      ]
+    },
+    {
+      "frame_number": 3,
+      "timestamp": "2026-01-14T10:26:04.344242",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6838506460189819,
+      "bbox": [
+        1,
+        230,
+        912,
+        710
+      ]
+    },
+    {
+      "frame_number": 3,
+      "timestamp": "2026-01-14T10:26:04.344280",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4550672769546509,
+      "bbox": [
+        0,
+        297,
+        101,
+        611
+      ]
+    },
+    {
+      "frame_number": 4,
+      "timestamp": "2026-01-14T10:26:04.389881",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6838506460189819,
+      "bbox": [
+        1,
+        230,
+        912,
+        710
+      ]
+    },
+    {
+      "frame_number": 4,
+      "timestamp": "2026-01-14T10:26:04.389920",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4550672769546509,
+      "bbox": [
+        0,
+        297,
+        101,
+        611
+      ]
+    },
+    {
+      "frame_number": 5,
+      "timestamp": "2026-01-14T10:26:04.428191",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6838506460189819,
+      "bbox": [
+        1,
+        230,
+        912,
+        710
+      ]
+    },
+    {
+      "frame_number": 5,
+      "timestamp": "2026-01-14T10:26:04.428230",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4550672769546509,
+      "bbox": [
+        0,
+        297,
+        101,
+        611
+      ]
+    },
+    {
+      "frame_number": 6,
+      "timestamp": "2026-01-14T10:26:04.494012",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6911951303482056,
+      "bbox": [
+        1,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 6,
+      "timestamp": "2026-01-14T10:26:04.494049",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5137585997581482,
+      "bbox": [
+        0,
+        298,
+        95,
+        611
+      ]
+    },
+    {
+      "frame_number": 7,
+      "timestamp": "2026-01-14T10:26:04.559498",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6911951303482056,
+      "bbox": [
+        1,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 7,
+      "timestamp": "2026-01-14T10:26:04.559536",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5137585997581482,
+      "bbox": [
+        0,
+        298,
+        95,
+        611
+      ]
+    },
+    {
+      "frame_number": 8,
+      "timestamp": "2026-01-14T10:26:04.598156",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6911951303482056,
+      "bbox": [
+        1,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 8,
+      "timestamp": "2026-01-14T10:26:04.598194",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5137585997581482,
+      "bbox": [
+        0,
+        298,
+        95,
+        611
+      ]
+    },
+    {
+      "frame_number": 9,
+      "timestamp": "2026-01-14T10:26:04.646766",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6911951303482056,
+      "bbox": [
+        1,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 9,
+      "timestamp": "2026-01-14T10:26:04.646802",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5137585997581482,
+      "bbox": [
+        0,
+        298,
+        95,
+        611
+      ]
+    },
+    {
+      "frame_number": 10,
+      "timestamp": "2026-01-14T10:26:04.714283",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7137743234634399,
+      "bbox": [
+        2,
+        230,
+        915,
+        710
+      ]
+    },
+    {
+      "frame_number": 10,
+      "timestamp": "2026-01-14T10:26:04.714322",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3826061189174652,
+      "bbox": [
+        0,
+        305,
+        135,
+        610
+      ]
+    },
+    {
+      "frame_number": 10,
+      "timestamp": "2026-01-14T10:26:04.714355",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34143468737602234,
+      "bbox": [
+        0,
+        301,
+        93,
+        612
+      ]
+    },
+    {
+      "frame_number": 11,
+      "timestamp": "2026-01-14T10:26:04.791466",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7137743234634399,
+      "bbox": [
+        2,
+        230,
+        915,
+        710
+      ]
+    },
+    {
+      "frame_number": 11,
+      "timestamp": "2026-01-14T10:26:04.791514",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3826061189174652,
+      "bbox": [
+        0,
+        305,
+        135,
+        610
+      ]
+    },
+    {
+      "frame_number": 11,
+      "timestamp": "2026-01-14T10:26:04.791553",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34143468737602234,
+      "bbox": [
+        0,
+        301,
+        93,
+        612
+      ]
+    },
+    {
+      "frame_number": 12,
+      "timestamp": "2026-01-14T10:26:04.833806",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7137743234634399,
+      "bbox": [
+        2,
+        230,
+        915,
+        710
+      ]
+    },
+    {
+      "frame_number": 12,
+      "timestamp": "2026-01-14T10:26:04.833847",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3826061189174652,
+      "bbox": [
+        0,
+        305,
+        135,
+        610
+      ]
+    },
+    {
+      "frame_number": 12,
+      "timestamp": "2026-01-14T10:26:04.833879",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34143468737602234,
+      "bbox": [
+        0,
+        301,
+        93,
+        612
+      ]
+    },
+    {
+      "frame_number": 13,
+      "timestamp": "2026-01-14T10:26:04.910176",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7137743234634399,
+      "bbox": [
+        2,
+        230,
+        915,
+        710
+      ]
+    },
+    {
+      "frame_number": 13,
+      "timestamp": "2026-01-14T10:26:04.910219",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3826061189174652,
+      "bbox": [
+        0,
+        305,
+        135,
+        610
+      ]
+    },
+    {
+      "frame_number": 13,
+      "timestamp": "2026-01-14T10:26:04.910251",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34143468737602234,
+      "bbox": [
+        0,
+        301,
+        93,
+        612
+      ]
+    },
+    {
+      "frame_number": 14,
+      "timestamp": "2026-01-14T10:26:04.975666",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7137743234634399,
+      "bbox": [
+        2,
+        230,
+        915,
+        710
+      ]
+    },
+    {
+      "frame_number": 14,
+      "timestamp": "2026-01-14T10:26:04.975707",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3826061189174652,
+      "bbox": [
+        0,
+        305,
+        135,
+        610
+      ]
+    },
+    {
+      "frame_number": 14,
+      "timestamp": "2026-01-14T10:26:04.975742",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34143468737602234,
+      "bbox": [
+        0,
+        301,
+        93,
+        612
+      ]
+    },
+    {
+      "frame_number": 15,
+      "timestamp": "2026-01-14T10:26:05.020738",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7137743234634399,
+      "bbox": [
+        2,
+        230,
+        915,
+        710
+      ]
+    },
+    {
+      "frame_number": 15,
+      "timestamp": "2026-01-14T10:26:05.020783",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3826061189174652,
+      "bbox": [
+        0,
+        305,
+        135,
+        610
+      ]
+    },
+    {
+      "frame_number": 15,
+      "timestamp": "2026-01-14T10:26:05.020814",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34143468737602234,
+      "bbox": [
+        0,
+        301,
+        93,
+        612
+      ]
+    },
+    {
+      "frame_number": 16,
+      "timestamp": "2026-01-14T10:26:05.081401",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7137743234634399,
+      "bbox": [
+        2,
+        230,
+        915,
+        710
+      ]
+    },
+    {
+      "frame_number": 16,
+      "timestamp": "2026-01-14T10:26:05.081438",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3826061189174652,
+      "bbox": [
+        0,
+        305,
+        135,
+        610
+      ]
+    },
+    {
+      "frame_number": 16,
+      "timestamp": "2026-01-14T10:26:05.081469",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34143468737602234,
+      "bbox": [
+        0,
+        301,
+        93,
+        612
+      ]
+    },
+    {
+      "frame_number": 17,
+      "timestamp": "2026-01-14T10:26:05.209865",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7102758884429932,
+      "bbox": [
+        2,
+        230,
+        914,
+        710
+      ]
+    },
+    {
+      "frame_number": 17,
+      "timestamp": "2026-01-14T10:26:05.209905",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3357813358306885,
+      "bbox": [
+        0,
+        305,
+        134,
+        611
+      ]
+    },
+    {
+      "frame_number": 17,
+      "timestamp": "2026-01-14T10:26:05.209936",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27981677651405334,
+      "bbox": [
+        0,
+        297,
+        83,
+        613
+      ]
+    },
+    {
+      "frame_number": 18,
+      "timestamp": "2026-01-14T10:26:05.250973",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7102758884429932,
+      "bbox": [
+        2,
+        230,
+        914,
+        710
+      ]
+    },
+    {
+      "frame_number": 18,
+      "timestamp": "2026-01-14T10:26:05.251010",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3357813358306885,
+      "bbox": [
+        0,
+        305,
+        134,
+        611
+      ]
+    },
+    {
+      "frame_number": 18,
+      "timestamp": "2026-01-14T10:26:05.251039",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27981677651405334,
+      "bbox": [
+        0,
+        297,
+        83,
+        613
+      ]
+    },
+    {
+      "frame_number": 19,
+      "timestamp": "2026-01-14T10:26:05.311305",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7078516483306885,
+      "bbox": [
+        2,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 19,
+      "timestamp": "2026-01-14T10:26:05.311348",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34749528765678406,
+      "bbox": [
+        0,
+        305,
+        135,
+        611
+      ]
+    },
+    {
+      "frame_number": 19,
+      "timestamp": "2026-01-14T10:26:05.311377",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27456408739089966,
+      "bbox": [
+        0,
+        298,
+        82,
+        613
+      ]
+    },
+    {
+      "frame_number": 20,
+      "timestamp": "2026-01-14T10:26:05.381684",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7078516483306885,
+      "bbox": [
+        2,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 20,
+      "timestamp": "2026-01-14T10:26:05.381723",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34749528765678406,
+      "bbox": [
+        0,
+        305,
+        135,
+        611
+      ]
+    },
+    {
+      "frame_number": 20,
+      "timestamp": "2026-01-14T10:26:05.381751",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27456408739089966,
+      "bbox": [
+        0,
+        298,
+        82,
+        613
+      ]
+    },
+    {
+      "frame_number": 21,
+      "timestamp": "2026-01-14T10:26:05.432911",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7078516483306885,
+      "bbox": [
+        2,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 21,
+      "timestamp": "2026-01-14T10:26:05.432950",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34749528765678406,
+      "bbox": [
+        0,
+        305,
+        135,
+        611
+      ]
+    },
+    {
+      "frame_number": 21,
+      "timestamp": "2026-01-14T10:26:05.432977",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27456408739089966,
+      "bbox": [
+        0,
+        298,
+        82,
+        613
+      ]
+    },
+    {
+      "frame_number": 22,
+      "timestamp": "2026-01-14T10:26:05.478743",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7078516483306885,
+      "bbox": [
+        2,
+        230,
+        913,
+        710
+      ]
+    },
+    {
+      "frame_number": 22,
+      "timestamp": "2026-01-14T10:26:05.478786",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.34749528765678406,
+      "bbox": [
+        0,
+        305,
+        135,
+        611
+      ]
+    },
+    {
+      "frame_number": 22,
+      "timestamp": "2026-01-14T10:26:05.478816",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27456408739089966,
+      "bbox": [
+        0,
+        298,
+        82,
+        613
+      ]
+    },
+    {
+      "frame_number": 23,
+      "timestamp": "2026-01-14T10:26:05.582317",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7257121205329895,
+      "bbox": [
+        1,
+        231,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 23,
+      "timestamp": "2026-01-14T10:26:05.582352",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2818699777126312,
+      "bbox": [
+        0,
+        297,
+        139,
+        613
+      ]
+    },
+    {
+      "frame_number": 24,
+      "timestamp": "2026-01-14T10:26:05.629104",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7257121205329895,
+      "bbox": [
+        1,
+        231,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 24,
+      "timestamp": "2026-01-14T10:26:05.629142",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2818699777126312,
+      "bbox": [
+        0,
+        297,
+        139,
+        613
+      ]
+    },
+    {
+      "frame_number": 25,
+      "timestamp": "2026-01-14T10:26:05.673194",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7257121205329895,
+      "bbox": [
+        1,
+        231,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 25,
+      "timestamp": "2026-01-14T10:26:05.673235",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2818699777126312,
+      "bbox": [
+        0,
+        297,
+        139,
+        613
+      ]
+    },
+    {
+      "frame_number": 26,
+      "timestamp": "2026-01-14T10:26:05.730690",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7046868801116943,
+      "bbox": [
+        1,
+        231,
+        912,
+        709
+      ]
+    },
+    {
+      "frame_number": 26,
+      "timestamp": "2026-01-14T10:26:05.730725",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2806974947452545,
+      "bbox": [
+        0,
+        297,
+        140,
+        613
+      ]
+    },
+    {
+      "frame_number": 27,
+      "timestamp": "2026-01-14T10:26:05.794151",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7046868801116943,
+      "bbox": [
+        1,
+        231,
+        912,
+        709
+      ]
+    },
+    {
+      "frame_number": 27,
+      "timestamp": "2026-01-14T10:26:05.794192",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2806974947452545,
+      "bbox": [
+        0,
+        297,
+        140,
+        613
+      ]
+    },
+    {
+      "frame_number": 28,
+      "timestamp": "2026-01-14T10:26:05.835824",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7046868801116943,
+      "bbox": [
+        1,
+        231,
+        912,
+        709
+      ]
+    },
+    {
+      "frame_number": 28,
+      "timestamp": "2026-01-14T10:26:05.835861",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2806974947452545,
+      "bbox": [
+        0,
+        297,
+        140,
+        613
+      ]
+    },
+    {
+      "frame_number": 29,
+      "timestamp": "2026-01-14T10:26:05.882819",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7046868801116943,
+      "bbox": [
+        1,
+        231,
+        912,
+        709
+      ]
+    },
+    {
+      "frame_number": 29,
+      "timestamp": "2026-01-14T10:26:05.882856",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2806974947452545,
+      "bbox": [
+        0,
+        297,
+        140,
+        613
+      ]
+    },
+    {
+      "frame_number": 30,
+      "timestamp": "2026-01-14T10:26:05.941794",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7119009494781494,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 30,
+      "timestamp": "2026-01-14T10:26:05.941833",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2817992866039276,
+      "bbox": [
+        0,
+        300,
+        137,
+        614
+      ]
+    },
+    {
+      "frame_number": 31,
+      "timestamp": "2026-01-14T10:26:05.999555",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7119009494781494,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 31,
+      "timestamp": "2026-01-14T10:26:05.999594",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2817992866039276,
+      "bbox": [
+        0,
+        300,
+        137,
+        614
+      ]
+    },
+    {
+      "frame_number": 32,
+      "timestamp": "2026-01-14T10:26:06.041815",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7119009494781494,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 32,
+      "timestamp": "2026-01-14T10:26:06.041855",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2817992866039276,
+      "bbox": [
+        0,
+        300,
+        137,
+        614
+      ]
+    },
+    {
+      "frame_number": 33,
+      "timestamp": "2026-01-14T10:26:06.091945",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7119009494781494,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 33,
+      "timestamp": "2026-01-14T10:26:06.091983",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2817992866039276,
+      "bbox": [
+        0,
+        300,
+        137,
+        614
+      ]
+    },
+    {
+      "frame_number": 34,
+      "timestamp": "2026-01-14T10:26:06.197838",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7147435545921326,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 34,
+      "timestamp": "2026-01-14T10:26:06.197872",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3004474341869354,
+      "bbox": [
+        0,
+        299,
+        138,
+        614
+      ]
+    },
+    {
+      "frame_number": 35,
+      "timestamp": "2026-01-14T10:26:06.245012",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7147435545921326,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 35,
+      "timestamp": "2026-01-14T10:26:06.245049",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3004474341869354,
+      "bbox": [
+        0,
+        299,
+        138,
+        614
+      ]
+    },
+    {
+      "frame_number": 36,
+      "timestamp": "2026-01-14T10:26:06.291584",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7147435545921326,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 36,
+      "timestamp": "2026-01-14T10:26:06.291621",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3004474341869354,
+      "bbox": [
+        0,
+        299,
+        138,
+        614
+      ]
+    },
+    {
+      "frame_number": 37,
+      "timestamp": "2026-01-14T10:26:06.360315",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7047617435455322,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 37,
+      "timestamp": "2026-01-14T10:26:06.360354",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2801637649536133,
+      "bbox": [
+        0,
+        299,
+        137,
+        614
+      ]
+    },
+    {
+      "frame_number": 38,
+      "timestamp": "2026-01-14T10:26:06.429912",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7047617435455322,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 38,
+      "timestamp": "2026-01-14T10:26:06.429947",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2801637649536133,
+      "bbox": [
+        0,
+        299,
+        137,
+        614
+      ]
+    },
+    {
+      "frame_number": 39,
+      "timestamp": "2026-01-14T10:26:06.465325",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7047617435455322,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 39,
+      "timestamp": "2026-01-14T10:26:06.465361",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2801637649536133,
+      "bbox": [
+        0,
+        299,
+        137,
+        614
+      ]
+    },
+    {
+      "frame_number": 40,
+      "timestamp": "2026-01-14T10:26:06.549508",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7133645415306091,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 40,
+      "timestamp": "2026-01-14T10:26:06.549542",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3383498191833496,
+      "bbox": [
+        0,
+        305,
+        130,
+        612
+      ]
+    },
+    {
+      "frame_number": 41,
+      "timestamp": "2026-01-14T10:26:06.607124",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7133645415306091,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 41,
+      "timestamp": "2026-01-14T10:26:06.607166",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3383498191833496,
+      "bbox": [
+        0,
+        305,
+        130,
+        612
+      ]
+    },
+    {
+      "frame_number": 42,
+      "timestamp": "2026-01-14T10:26:06.644214",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7133645415306091,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 42,
+      "timestamp": "2026-01-14T10:26:06.644248",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3383498191833496,
+      "bbox": [
+        0,
+        305,
+        130,
+        612
+      ]
+    },
+    {
+      "frame_number": 43,
+      "timestamp": "2026-01-14T10:26:06.682678",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7133645415306091,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 43,
+      "timestamp": "2026-01-14T10:26:06.682716",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3383498191833496,
+      "bbox": [
+        0,
+        305,
+        130,
+        612
+      ]
+    },
+    {
+      "frame_number": 44,
+      "timestamp": "2026-01-14T10:26:06.754509",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7217331528663635,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 45,
+      "timestamp": "2026-01-14T10:26:06.805830",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7217331528663635,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 46,
+      "timestamp": "2026-01-14T10:26:06.839706",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7217331528663635,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 47,
+      "timestamp": "2026-01-14T10:26:06.876894",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7217331528663635,
+      "bbox": [
+        1,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 48,
+      "timestamp": "2026-01-14T10:26:06.951537",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7090840935707092,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 48,
+      "timestamp": "2026-01-14T10:26:06.951574",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.29681506752967834,
+      "bbox": [
+        0,
+        306,
+        132,
+        610
+      ]
+    },
+    {
+      "frame_number": 49,
+      "timestamp": "2026-01-14T10:26:07.029468",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7090840935707092,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 49,
+      "timestamp": "2026-01-14T10:26:07.029510",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.29681506752967834,
+      "bbox": [
+        0,
+        306,
+        132,
+        610
+      ]
+    },
+    {
+      "frame_number": 50,
+      "timestamp": "2026-01-14T10:26:07.073501",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7090840935707092,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 50,
+      "timestamp": "2026-01-14T10:26:07.073538",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.29681506752967834,
+      "bbox": [
+        0,
+        306,
+        132,
+        610
+      ]
+    },
+    {
+      "frame_number": 51,
+      "timestamp": "2026-01-14T10:26:07.125944",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7090840935707092,
+      "bbox": [
+        2,
+        230,
+        913,
+        709
+      ]
+    },
+    {
+      "frame_number": 51,
+      "timestamp": "2026-01-14T10:26:07.125983",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.29681506752967834,
+      "bbox": [
+        0,
+        306,
+        132,
+        610
+      ]
+    },
+    {
+      "frame_number": 52,
+      "timestamp": "2026-01-14T10:26:07.247213",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6995609998703003,
+      "bbox": [
+        2,
+        230,
+        912,
+        709
+      ]
+    },
+    {
+      "frame_number": 52,
+      "timestamp": "2026-01-14T10:26:07.247248",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2864232063293457,
+      "bbox": [
+        0,
+        305,
+        131,
+        610
+      ]
+    },
+    {
+      "frame_number": 53,
+      "timestamp": "2026-01-14T10:26:07.334111",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6995609998703003,
+      "bbox": [
+        2,
+        230,
+        912,
+        709
+      ]
+    },
+    {
+      "frame_number": 53,
+      "timestamp": "2026-01-14T10:26:07.334296",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2864232063293457,
+      "bbox": [
+        0,
+        305,
+        131,
+        610
+      ]
+    },
+    {
+      "frame_number": 54,
+      "timestamp": "2026-01-14T10:26:07.468900",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5129405856132507,
+      "bbox": [
+        7,
+        348,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 54,
+      "timestamp": "2026-01-14T10:26:07.468960",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.39109188318252563,
+      "bbox": [
+        0,
+        456,
+        109,
+        917
+      ]
+    },
+    {
+      "frame_number": 55,
+      "timestamp": "2026-01-14T10:26:07.554342",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5129405856132507,
+      "bbox": [
+        7,
+        348,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 55,
+      "timestamp": "2026-01-14T10:26:07.554377",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.39109188318252563,
+      "bbox": [
+        0,
+        456,
+        109,
+        917
+      ]
+    },
+    {
+      "frame_number": 56,
+      "timestamp": "2026-01-14T10:26:07.688706",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6293823719024658,
+      "bbox": [
+        0,
+        351,
+        1372,
+        1064
+      ]
+    },
+    {
+      "frame_number": 56,
+      "timestamp": "2026-01-14T10:26:07.688744",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.36463549733161926,
+      "bbox": [
+        0,
+        448,
+        109,
+        917
+      ]
+    },
+    {
+      "frame_number": 56,
+      "timestamp": "2026-01-14T10:26:07.688783",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.35381412506103516,
+      "bbox": [
+        0,
+        455,
+        187,
+        914
+      ]
+    },
+    {
+      "frame_number": 57,
+      "timestamp": "2026-01-14T10:26:07.813455",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7021983861923218,
+      "bbox": [
+        0,
+        351,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 57,
+      "timestamp": "2026-01-14T10:26:07.813771",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3480185866355896,
+      "bbox": [
+        0,
+        457,
+        190,
+        914
+      ]
+    },
+    {
+      "frame_number": 57,
+      "timestamp": "2026-01-14T10:26:07.813803",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3229505121707916,
+      "bbox": [
+        0,
+        451,
+        112,
+        917
+      ]
+    },
+    {
+      "frame_number": 58,
+      "timestamp": "2026-01-14T10:26:07.886532",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7021983861923218,
+      "bbox": [
+        0,
+        351,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 58,
+      "timestamp": "2026-01-14T10:26:07.886568",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3480185866355896,
+      "bbox": [
+        0,
+        457,
+        190,
+        914
+      ]
+    },
+    {
+      "frame_number": 58,
+      "timestamp": "2026-01-14T10:26:07.886595",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3229505121707916,
+      "bbox": [
+        0,
+        451,
+        112,
+        917
+      ]
+    },
+    {
+      "frame_number": 59,
+      "timestamp": "2026-01-14T10:26:07.968476",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7021983861923218,
+      "bbox": [
+        0,
+        351,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 59,
+      "timestamp": "2026-01-14T10:26:07.968516",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3480185866355896,
+      "bbox": [
+        0,
+        457,
+        190,
+        914
+      ]
+    },
+    {
+      "frame_number": 59,
+      "timestamp": "2026-01-14T10:26:07.968549",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3229505121707916,
+      "bbox": [
+        0,
+        451,
+        112,
+        917
+      ]
+    },
+    {
+      "frame_number": 60,
+      "timestamp": "2026-01-14T10:26:08.105247",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7021983861923218,
+      "bbox": [
+        0,
+        351,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 60,
+      "timestamp": "2026-01-14T10:26:08.105316",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3480185866355896,
+      "bbox": [
+        0,
+        457,
+        190,
+        914
+      ]
+    },
+    {
+      "frame_number": 60,
+      "timestamp": "2026-01-14T10:26:08.105350",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3229505121707916,
+      "bbox": [
+        0,
+        451,
+        112,
+        917
+      ]
+    },
+    {
+      "frame_number": 61,
+      "timestamp": "2026-01-14T10:26:08.217482",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7084981203079224,
+      "bbox": [
+        0,
+        350,
+        1373,
+        1064
+      ]
+    },
+    {
+      "frame_number": 61,
+      "timestamp": "2026-01-14T10:26:08.217793",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2862710952758789,
+      "bbox": [
+        0,
+        456,
+        185,
+        914
+      ]
+    },
+    {
+      "frame_number": 61,
+      "timestamp": "2026-01-14T10:26:08.217822",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2733960449695587,
+      "bbox": [
+        0,
+        445,
+        111,
+        918
+      ]
+    },
+    {
+      "frame_number": 62,
+      "timestamp": "2026-01-14T10:26:08.309133",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7084981203079224,
+      "bbox": [
+        0,
+        350,
+        1373,
+        1064
+      ]
+    },
+    {
+      "frame_number": 62,
+      "timestamp": "2026-01-14T10:26:08.309169",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2862710952758789,
+      "bbox": [
+        0,
+        456,
+        185,
+        914
+      ]
+    },
+    {
+      "frame_number": 62,
+      "timestamp": "2026-01-14T10:26:08.309198",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.2733960449695587,
+      "bbox": [
+        0,
+        445,
+        111,
+        918
+      ]
+    },
+    {
+      "frame_number": 63,
+      "timestamp": "2026-01-14T10:26:08.411817",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7248139381408691,
+      "bbox": [
+        3,
+        347,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 64,
+      "timestamp": "2026-01-14T10:26:08.501457",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7248139381408691,
+      "bbox": [
+        3,
+        347,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 65,
+      "timestamp": "2026-01-14T10:26:08.589529",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7248139381408691,
+      "bbox": [
+        3,
+        347,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 66,
+      "timestamp": "2026-01-14T10:26:08.696775",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7245988845825195,
+      "bbox": [
+        3,
+        346,
+        1371,
+        1064
+      ]
+    },
+    {
+      "frame_number": 66,
+      "timestamp": "2026-01-14T10:26:08.696808",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.26001691818237305,
+      "bbox": [
+        0,
+        448,
+        107,
+        918
+      ]
+    },
+    {
+      "frame_number": 67,
+      "timestamp": "2026-01-14T10:26:08.781766",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7245988845825195,
+      "bbox": [
+        3,
+        346,
+        1371,
+        1064
+      ]
+    },
+    {
+      "frame_number": 67,
+      "timestamp": "2026-01-14T10:26:08.781806",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.26001691818237305,
+      "bbox": [
+        0,
+        448,
+        107,
+        918
+      ]
+    },
+    {
+      "frame_number": 68,
+      "timestamp": "2026-01-14T10:26:08.895174",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7245988845825195,
+      "bbox": [
+        3,
+        346,
+        1371,
+        1064
+      ]
+    },
+    {
+      "frame_number": 68,
+      "timestamp": "2026-01-14T10:26:08.895210",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.26001691818237305,
+      "bbox": [
+        0,
+        448,
+        107,
+        918
+      ]
+    },
+    {
+      "frame_number": 69,
+      "timestamp": "2026-01-14T10:26:08.980643",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7245988845825195,
+      "bbox": [
+        3,
+        346,
+        1371,
+        1064
+      ]
+    },
+    {
+      "frame_number": 69,
+      "timestamp": "2026-01-14T10:26:08.980678",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.26001691818237305,
+      "bbox": [
+        0,
+        448,
+        107,
+        918
+      ]
+    },
+    {
+      "frame_number": 70,
+      "timestamp": "2026-01-14T10:26:09.115366",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7465875148773193,
+      "bbox": [
+        0,
+        347,
+        1371,
+        1064
+      ]
+    },
+    {
+      "frame_number": 70,
+      "timestamp": "2026-01-14T10:26:09.115398",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3114769160747528,
+      "bbox": [
+        0,
+        452,
+        100,
+        917
+      ]
+    },
+    {
+      "frame_number": 71,
+      "timestamp": "2026-01-14T10:26:09.229270",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7493524551391602,
+      "bbox": [
+        0,
+        347,
+        1370,
+        1063
+      ]
+    },
+    {
+      "frame_number": 71,
+      "timestamp": "2026-01-14T10:26:09.229317",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3952122628688812,
+      "bbox": [
+        0,
+        459,
+        100,
+        912
+      ]
+    },
+    {
+      "frame_number": 72,
+      "timestamp": "2026-01-14T10:26:09.307678",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7493524551391602,
+      "bbox": [
+        0,
+        347,
+        1370,
+        1063
+      ]
+    },
+    {
+      "frame_number": 72,
+      "timestamp": "2026-01-14T10:26:09.307712",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3952122628688812,
+      "bbox": [
+        0,
+        459,
+        100,
+        912
+      ]
+    },
+    {
+      "frame_number": 73,
+      "timestamp": "2026-01-14T10:26:09.396614",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7493524551391602,
+      "bbox": [
+        0,
+        347,
+        1370,
+        1063
+      ]
+    },
+    {
+      "frame_number": 73,
+      "timestamp": "2026-01-14T10:26:09.396650",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3952122628688812,
+      "bbox": [
+        0,
+        459,
+        100,
+        912
+      ]
+    },
+    {
+      "frame_number": 74,
+      "timestamp": "2026-01-14T10:26:09.519307",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.72536700963974,
+      "bbox": [
+        2,
+        346,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 74,
+      "timestamp": "2026-01-14T10:26:09.519344",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.38607433438301086,
+      "bbox": [
+        0,
+        459,
+        99,
+        914
+      ]
+    },
+    {
+      "frame_number": 75,
+      "timestamp": "2026-01-14T10:26:09.615364",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.72536700963974,
+      "bbox": [
+        2,
+        346,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 75,
+      "timestamp": "2026-01-14T10:26:09.615402",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.38607433438301086,
+      "bbox": [
+        0,
+        459,
+        99,
+        914
+      ]
+    },
+    {
+      "frame_number": 76,
+      "timestamp": "2026-01-14T10:26:09.700860",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.72536700963974,
+      "bbox": [
+        2,
+        346,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 76,
+      "timestamp": "2026-01-14T10:26:09.700894",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.38607433438301086,
+      "bbox": [
+        0,
+        459,
+        99,
+        914
+      ]
+    },
+    {
+      "frame_number": 77,
+      "timestamp": "2026-01-14T10:26:09.796536",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.72536700963974,
+      "bbox": [
+        2,
+        346,
+        1370,
+        1064
+      ]
+    },
+    {
+      "frame_number": 77,
+      "timestamp": "2026-01-14T10:26:09.796571",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.38607433438301086,
+      "bbox": [
+        0,
+        459,
+        99,
+        914
+      ]
+    },
+    {
+      "frame_number": 78,
+      "timestamp": "2026-01-14T10:26:09.910443",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6895281672477722,
+      "bbox": [
+        3,
+        345,
+        1367,
+        1064
+      ]
+    },
+    {
+      "frame_number": 78,
+      "timestamp": "2026-01-14T10:26:09.910476",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.36419838666915894,
+      "bbox": [
+        0,
+        458,
+        99,
+        914
+      ]
+    },
+    {
+      "frame_number": 79,
+      "timestamp": "2026-01-14T10:26:10.001223",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6895281672477722,
+      "bbox": [
+        3,
+        345,
+        1367,
+        1064
+      ]
+    },
+    {
+      "frame_number": 79,
+      "timestamp": "2026-01-14T10:26:10.001261",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.36419838666915894,
+      "bbox": [
+        0,
+        458,
+        99,
+        914
+      ]
+    },
+    {
+      "frame_number": 80,
+      "timestamp": "2026-01-14T10:26:10.140580",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7202804684638977,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 80,
+      "timestamp": "2026-01-14T10:26:10.140619",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3930056095123291,
+      "bbox": [
+        0,
+        458,
+        98,
+        914
+      ]
+    },
+    {
+      "frame_number": 81,
+      "timestamp": "2026-01-14T10:26:10.257133",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7141899466514587,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 81,
+      "timestamp": "2026-01-14T10:26:10.257173",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.35811007022857666,
+      "bbox": [
+        0,
+        459,
+        98,
+        913
+      ]
+    },
+    {
+      "frame_number": 82,
+      "timestamp": "2026-01-14T10:26:10.325345",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7141899466514587,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 82,
+      "timestamp": "2026-01-14T10:26:10.325384",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.35811007022857666,
+      "bbox": [
+        0,
+        459,
+        98,
+        913
+      ]
+    },
+    {
+      "frame_number": 83,
+      "timestamp": "2026-01-14T10:26:10.411271",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7141899466514587,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 83,
+      "timestamp": "2026-01-14T10:26:10.411307",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.35811007022857666,
+      "bbox": [
+        0,
+        459,
+        98,
+        913
+      ]
+    },
+    {
+      "frame_number": 84,
+      "timestamp": "2026-01-14T10:26:10.543261",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.729499101638794,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 84,
+      "timestamp": "2026-01-14T10:26:10.543296",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.336407333612442,
+      "bbox": [
+        0,
+        458,
+        98,
+        916
+      ]
+    },
+    {
+      "frame_number": 85,
+      "timestamp": "2026-01-14T10:26:10.703923",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.729499101638794,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 85,
+      "timestamp": "2026-01-14T10:26:10.703960",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.336407333612442,
+      "bbox": [
+        0,
+        458,
+        98,
+        916
+      ]
+    },
+    {
+      "frame_number": 86,
+      "timestamp": "2026-01-14T10:26:10.814718",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.729499101638794,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 86,
+      "timestamp": "2026-01-14T10:26:10.814770",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.336407333612442,
+      "bbox": [
+        0,
+        458,
+        98,
+        916
+      ]
+    },
+    {
+      "frame_number": 87,
+      "timestamp": "2026-01-14T10:26:10.939495",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7094684839248657,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 87,
+      "timestamp": "2026-01-14T10:26:10.939531",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4077549874782562,
+      "bbox": [
+        0,
+        459,
+        98,
+        917
+      ]
+    },
+    {
+      "frame_number": 88,
+      "timestamp": "2026-01-14T10:26:11.055423",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7094684839248657,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 88,
+      "timestamp": "2026-01-14T10:26:11.055461",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4077549874782562,
+      "bbox": [
+        0,
+        459,
+        98,
+        917
+      ]
+    },
+    {
+      "frame_number": 89,
+      "timestamp": "2026-01-14T10:26:11.185174",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6954900622367859,
+      "bbox": [
+        1,
+        344,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 89,
+      "timestamp": "2026-01-14T10:26:11.185212",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4912038743495941,
+      "bbox": [
+        0,
+        435,
+        211,
+        915
+      ]
+    },
+    {
+      "frame_number": 90,
+      "timestamp": "2026-01-14T10:26:11.306931",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.679119348526001,
+      "bbox": [
+        1,
+        344,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 90,
+      "timestamp": "2026-01-14T10:26:11.306975",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.35647302865982056,
+      "bbox": [
+        0,
+        367,
+        245,
+        917
+      ]
+    },
+    {
+      "frame_number": 91,
+      "timestamp": "2026-01-14T10:26:11.383040",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.679119348526001,
+      "bbox": [
+        1,
+        344,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 91,
+      "timestamp": "2026-01-14T10:26:11.383092",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.35647302865982056,
+      "bbox": [
+        0,
+        367,
+        245,
+        917
+      ]
+    },
+    {
+      "frame_number": 92,
+      "timestamp": "2026-01-14T10:26:11.497312",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6710100173950195,
+      "bbox": [
+        1,
+        343,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 93,
+      "timestamp": "2026-01-14T10:26:11.570530",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6710100173950195,
+      "bbox": [
+        1,
+        343,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 94,
+      "timestamp": "2026-01-14T10:26:11.693288",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6984898447990417,
+      "bbox": [
+        3,
+        345,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 94,
+      "timestamp": "2026-01-14T10:26:11.693318",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.29388490319252014,
+      "bbox": [
+        0,
+        615,
+        62,
+        874
+      ]
+    },
+    {
+      "frame_number": 94,
+      "timestamp": "2026-01-14T10:26:11.693337",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2761922776699066,
+      "bbox": [
+        309,
+        702,
+        417,
+        747
+      ]
+    },
+    {
+      "frame_number": 95,
+      "timestamp": "2026-01-14T10:26:11.773841",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6984898447990417,
+      "bbox": [
+        3,
+        345,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 95,
+      "timestamp": "2026-01-14T10:26:11.773871",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.29388490319252014,
+      "bbox": [
+        0,
+        615,
+        62,
+        874
+      ]
+    },
+    {
+      "frame_number": 95,
+      "timestamp": "2026-01-14T10:26:11.773889",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2761922776699066,
+      "bbox": [
+        309,
+        702,
+        417,
+        747
+      ]
+    },
+    {
+      "frame_number": 96,
+      "timestamp": "2026-01-14T10:26:11.904275",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6795297265052795,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 96,
+      "timestamp": "2026-01-14T10:26:11.904301",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2861942946910858,
+      "bbox": [
+        309,
+        702,
+        416,
+        746
+      ]
+    },
+    {
+      "frame_number": 97,
+      "timestamp": "2026-01-14T10:26:11.979241",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6795297265052795,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 97,
+      "timestamp": "2026-01-14T10:26:11.979265",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2861942946910858,
+      "bbox": [
+        309,
+        702,
+        416,
+        746
+      ]
+    },
+    {
+      "frame_number": 98,
+      "timestamp": "2026-01-14T10:26:12.107702",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6650391221046448,
+      "bbox": [
+        2,
+        344,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 98,
+      "timestamp": "2026-01-14T10:26:12.107727",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2676558494567871,
+      "bbox": [
+        309,
+        702,
+        415,
+        746
+      ]
+    },
+    {
+      "frame_number": 99,
+      "timestamp": "2026-01-14T10:26:12.186484",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6650391221046448,
+      "bbox": [
+        2,
+        344,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 99,
+      "timestamp": "2026-01-14T10:26:12.186508",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2676558494567871,
+      "bbox": [
+        309,
+        702,
+        415,
+        746
+      ]
+    },
+    {
+      "frame_number": 100,
+      "timestamp": "2026-01-14T10:26:12.304481",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7236414551734924,
+      "bbox": [
+        2,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 101,
+      "timestamp": "2026-01-14T10:26:12.398366",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7236414551734924,
+      "bbox": [
+        2,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 102,
+      "timestamp": "2026-01-14T10:26:12.523821",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6934428811073303,
+      "bbox": [
+        2,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 102,
+      "timestamp": "2026-01-14T10:26:12.523843",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.25544804334640503,
+      "bbox": [
+        309,
+        702,
+        420,
+        747
+      ]
+    },
+    {
+      "frame_number": 103,
+      "timestamp": "2026-01-14T10:26:12.598038",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6934428811073303,
+      "bbox": [
+        2,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 103,
+      "timestamp": "2026-01-14T10:26:12.598062",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.25544804334640503,
+      "bbox": [
+        309,
+        702,
+        420,
+        747
+      ]
+    },
+    {
+      "frame_number": 104,
+      "timestamp": "2026-01-14T10:26:12.714165",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6824430227279663,
+      "bbox": [
+        2,
+        345,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 105,
+      "timestamp": "2026-01-14T10:26:12.811436",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6824430227279663,
+      "bbox": [
+        2,
+        345,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 106,
+      "timestamp": "2026-01-14T10:26:12.936992",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5701950788497925,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 107,
+      "timestamp": "2026-01-14T10:26:13.021766",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5701950788497925,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 108,
+      "timestamp": "2026-01-14T10:26:13.150205",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6048051118850708,
+      "bbox": [
+        2,
+        344,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 108,
+      "timestamp": "2026-01-14T10:26:13.150231",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.26345211267471313,
+      "bbox": [
+        309,
+        702,
+        417,
+        746
+      ]
+    },
+    {
+      "frame_number": 109,
+      "timestamp": "2026-01-14T10:26:13.236236",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6048051118850708,
+      "bbox": [
+        2,
+        344,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 109,
+      "timestamp": "2026-01-14T10:26:13.236261",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.26345211267471313,
+      "bbox": [
+        309,
+        702,
+        417,
+        746
+      ]
+    },
+    {
+      "frame_number": 110,
+      "timestamp": "2026-01-14T10:26:13.355930",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5795263648033142,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 111,
+      "timestamp": "2026-01-14T10:26:13.426681",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5795263648033142,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 112,
+      "timestamp": "2026-01-14T10:26:13.532514",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5795263648033142,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 113,
+      "timestamp": "2026-01-14T10:26:13.656270",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6516355872154236,
+      "bbox": [
+        2,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 114,
+      "timestamp": "2026-01-14T10:26:13.765151",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7195373177528381,
+      "bbox": [
+        2,
+        346,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 115,
+      "timestamp": "2026-01-14T10:26:13.845127",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7195373177528381,
+      "bbox": [
+        2,
+        346,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 116,
+      "timestamp": "2026-01-14T10:26:13.933020",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7195373177528381,
+      "bbox": [
+        2,
+        346,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 117,
+      "timestamp": "2026-01-14T10:26:14.057350",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6597519516944885,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 118,
+      "timestamp": "2026-01-14T10:26:14.171968",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6597519516944885,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 119,
+      "timestamp": "2026-01-14T10:26:14.248317",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6597519516944885,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 120,
+      "timestamp": "2026-01-14T10:26:14.346441",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6597519516944885,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 121,
+      "timestamp": "2026-01-14T10:26:14.486352",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.672686755657196,
+      "bbox": [
+        3,
+        345,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 122,
+      "timestamp": "2026-01-14T10:26:14.614499",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6713774800300598,
+      "bbox": [
+        2,
+        345,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 123,
+      "timestamp": "2026-01-14T10:26:14.714688",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6713774800300598,
+      "bbox": [
+        2,
+        345,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 124,
+      "timestamp": "2026-01-14T10:26:14.814287",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999751687049866,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 125,
+      "timestamp": "2026-01-14T10:26:14.888622",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999751687049866,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 126,
+      "timestamp": "2026-01-14T10:26:14.958235",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999751687049866,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 127,
+      "timestamp": "2026-01-14T10:26:15.022890",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999751687049866,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 128,
+      "timestamp": "2026-01-14T10:26:15.116018",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999751687049866,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 129,
+      "timestamp": "2026-01-14T10:26:15.217950",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5813881754875183,
+      "bbox": [
+        3,
+        344,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 130,
+      "timestamp": "2026-01-14T10:26:15.303876",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5813881754875183,
+      "bbox": [
+        3,
+        344,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 131,
+      "timestamp": "2026-01-14T10:26:15.427163",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5686652660369873,
+      "bbox": [
+        3,
+        344,
+        1367,
+        1066
+      ]
+    },
+    {
+      "frame_number": 132,
+      "timestamp": "2026-01-14T10:26:15.502379",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5686652660369873,
+      "bbox": [
+        3,
+        344,
+        1367,
+        1066
+      ]
+    },
+    {
+      "frame_number": 133,
+      "timestamp": "2026-01-14T10:26:15.620511",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.66465163230896,
+      "bbox": [
+        2,
+        344,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 133,
+      "timestamp": "2026-01-14T10:26:15.620537",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.3040830194950104,
+      "bbox": [
+        309,
+        702,
+        414,
+        746
+      ]
+    },
+    {
+      "frame_number": 134,
+      "timestamp": "2026-01-14T10:26:15.715570",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.66465163230896,
+      "bbox": [
+        2,
+        344,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 134,
+      "timestamp": "2026-01-14T10:26:15.715591",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.3040830194950104,
+      "bbox": [
+        309,
+        702,
+        414,
+        746
+      ]
+    },
+    {
+      "frame_number": 135,
+      "timestamp": "2026-01-14T10:26:15.837522",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6715670228004456,
+      "bbox": [
+        2,
+        346,
+        1367,
+        1064
+      ]
+    },
+    {
+      "frame_number": 135,
+      "timestamp": "2026-01-14T10:26:15.837554",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.41624897718429565,
+      "bbox": [
+        0,
+        634,
+        72,
+        884
+      ]
+    },
+    {
+      "frame_number": 135,
+      "timestamp": "2026-01-14T10:26:15.837571",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2776343524456024,
+      "bbox": [
+        0,
+        796,
+        45,
+        885
+      ]
+    },
+    {
+      "frame_number": 135,
+      "timestamp": "2026-01-14T10:26:15.837586",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2708930969238281,
+      "bbox": [
+        309,
+        702,
+        417,
+        746
+      ]
+    },
+    {
+      "frame_number": 136,
+      "timestamp": "2026-01-14T10:26:15.922179",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6715670228004456,
+      "bbox": [
+        2,
+        346,
+        1367,
+        1064
+      ]
+    },
+    {
+      "frame_number": 136,
+      "timestamp": "2026-01-14T10:26:15.922212",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.41624897718429565,
+      "bbox": [
+        0,
+        634,
+        72,
+        884
+      ]
+    },
+    {
+      "frame_number": 136,
+      "timestamp": "2026-01-14T10:26:15.922231",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2776343524456024,
+      "bbox": [
+        0,
+        796,
+        45,
+        885
+      ]
+    },
+    {
+      "frame_number": 136,
+      "timestamp": "2026-01-14T10:26:15.922249",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2708930969238281,
+      "bbox": [
+        309,
+        702,
+        417,
+        746
+      ]
+    },
+    {
+      "frame_number": 137,
+      "timestamp": "2026-01-14T10:26:16.033614",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6878012418746948,
+      "bbox": [
+        3,
+        346,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 137,
+      "timestamp": "2026-01-14T10:26:16.033644",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5179824233055115,
+      "bbox": [
+        0,
+        616,
+        79,
+        888
+      ]
+    },
+    {
+      "frame_number": 138,
+      "timestamp": "2026-01-14T10:26:16.126841",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6878012418746948,
+      "bbox": [
+        3,
+        346,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 138,
+      "timestamp": "2026-01-14T10:26:16.126871",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5179824233055115,
+      "bbox": [
+        0,
+        616,
+        79,
+        888
+      ]
+    },
+    {
+      "frame_number": 139,
+      "timestamp": "2026-01-14T10:26:16.253154",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6767032742500305,
+      "bbox": [
+        1,
+        346,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 139,
+      "timestamp": "2026-01-14T10:26:16.253192",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5771791338920593,
+      "bbox": [
+        0,
+        517,
+        131,
+        903
+      ]
+    },
+    {
+      "frame_number": 140,
+      "timestamp": "2026-01-14T10:26:16.330060",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6767032742500305,
+      "bbox": [
+        1,
+        346,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 140,
+      "timestamp": "2026-01-14T10:26:16.330101",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5771791338920593,
+      "bbox": [
+        0,
+        517,
+        131,
+        903
+      ]
+    },
+    {
+      "frame_number": 141,
+      "timestamp": "2026-01-14T10:26:16.445808",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6823667287826538,
+      "bbox": [
+        2,
+        346,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 141,
+      "timestamp": "2026-01-14T10:26:16.445841",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5283014178276062,
+      "bbox": [
+        0,
+        516,
+        126,
+        904
+      ]
+    },
+    {
+      "frame_number": 142,
+      "timestamp": "2026-01-14T10:26:16.540959",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6823667287826538,
+      "bbox": [
+        2,
+        346,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 142,
+      "timestamp": "2026-01-14T10:26:16.540992",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5283014178276062,
+      "bbox": [
+        0,
+        516,
+        126,
+        904
+      ]
+    },
+    {
+      "frame_number": 143,
+      "timestamp": "2026-01-14T10:26:16.658999",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6828245520591736,
+      "bbox": [
+        2,
+        346,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 143,
+      "timestamp": "2026-01-14T10:26:16.659032",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5188676714897156,
+      "bbox": [
+        0,
+        523,
+        109,
+        906
+      ]
+    },
+    {
+      "frame_number": 144,
+      "timestamp": "2026-01-14T10:26:16.742821",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6828245520591736,
+      "bbox": [
+        2,
+        346,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 144,
+      "timestamp": "2026-01-14T10:26:16.742856",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5188676714897156,
+      "bbox": [
+        0,
+        523,
+        109,
+        906
+      ]
+    },
+    {
+      "frame_number": 145,
+      "timestamp": "2026-01-14T10:26:16.856924",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6959314942359924,
+      "bbox": [
+        2,
+        347,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 145,
+      "timestamp": "2026-01-14T10:26:16.856959",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5054532885551453,
+      "bbox": [
+        0,
+        522,
+        108,
+        906
+      ]
+    },
+    {
+      "frame_number": 146,
+      "timestamp": "2026-01-14T10:26:16.931628",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6959314942359924,
+      "bbox": [
+        2,
+        347,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 146,
+      "timestamp": "2026-01-14T10:26:16.931662",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5054532885551453,
+      "bbox": [
+        0,
+        522,
+        108,
+        906
+      ]
+    },
+    {
+      "frame_number": 147,
+      "timestamp": "2026-01-14T10:26:17.008884",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6959314942359924,
+      "bbox": [
+        2,
+        347,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 147,
+      "timestamp": "2026-01-14T10:26:17.008918",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5054532885551453,
+      "bbox": [
+        0,
+        522,
+        108,
+        906
+      ]
+    },
+    {
+      "frame_number": 148,
+      "timestamp": "2026-01-14T10:26:17.142989",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6959314942359924,
+      "bbox": [
+        2,
+        347,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 148,
+      "timestamp": "2026-01-14T10:26:17.143022",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5054532885551453,
+      "bbox": [
+        0,
+        522,
+        108,
+        906
+      ]
+    },
+    {
+      "frame_number": 149,
+      "timestamp": "2026-01-14T10:26:17.221193",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6959314942359924,
+      "bbox": [
+        2,
+        347,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 149,
+      "timestamp": "2026-01-14T10:26:17.221251",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5054532885551453,
+      "bbox": [
+        0,
+        522,
+        108,
+        906
+      ]
+    },
+    {
+      "frame_number": 150,
+      "timestamp": "2026-01-14T10:26:17.350171",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6878952980041504,
+      "bbox": [
+        3,
+        347,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 150,
+      "timestamp": "2026-01-14T10:26:17.350198",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.37318503856658936,
+      "bbox": [
+        0,
+        670,
+        69,
+        900
+      ]
+    },
+    {
+      "frame_number": 151,
+      "timestamp": "2026-01-14T10:26:17.475871",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6809073090553284,
+      "bbox": [
+        2,
+        346,
+        1368,
+        1064
+      ]
+    },
+    {
+      "frame_number": 151,
+      "timestamp": "2026-01-14T10:26:17.475901",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.40566328167915344,
+      "bbox": [
+        0,
+        633,
+        72,
+        899
+      ]
+    },
+    {
+      "frame_number": 152,
+      "timestamp": "2026-01-14T10:26:17.556261",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6809073090553284,
+      "bbox": [
+        2,
+        346,
+        1368,
+        1064
+      ]
+    },
+    {
+      "frame_number": 152,
+      "timestamp": "2026-01-14T10:26:17.556293",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.40566328167915344,
+      "bbox": [
+        0,
+        633,
+        72,
+        899
+      ]
+    },
+    {
+      "frame_number": 153,
+      "timestamp": "2026-01-14T10:26:17.673449",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6778743267059326,
+      "bbox": [
+        3,
+        346,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 153,
+      "timestamp": "2026-01-14T10:26:17.673478",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.36321842670440674,
+      "bbox": [
+        0,
+        672,
+        67,
+        903
+      ]
+    },
+    {
+      "frame_number": 154,
+      "timestamp": "2026-01-14T10:26:17.772506",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6778743267059326,
+      "bbox": [
+        3,
+        346,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 154,
+      "timestamp": "2026-01-14T10:26:17.772539",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.36321842670440674,
+      "bbox": [
+        0,
+        672,
+        67,
+        903
+      ]
+    },
+    {
+      "frame_number": 155,
+      "timestamp": "2026-01-14T10:26:17.873667",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6971923112869263,
+      "bbox": [
+        3,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 156,
+      "timestamp": "2026-01-14T10:26:17.961699",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6971923112869263,
+      "bbox": [
+        3,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 157,
+      "timestamp": "2026-01-14T10:26:18.048152",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6971923112869263,
+      "bbox": [
+        3,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 158,
+      "timestamp": "2026-01-14T10:26:18.164407",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6971923112869263,
+      "bbox": [
+        3,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 159,
+      "timestamp": "2026-01-14T10:26:18.251993",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6971923112869263,
+      "bbox": [
+        3,
+        345,
+        1369,
+        1064
+      ]
+    },
+    {
+      "frame_number": 160,
+      "timestamp": "2026-01-14T10:26:18.376478",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6559377312660217,
+      "bbox": [
+        0,
+        347,
+        1369,
+        1062
+      ]
+    },
+    {
+      "frame_number": 160,
+      "timestamp": "2026-01-14T10:26:18.376509",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5457758903503418,
+      "bbox": [
+        0,
+        610,
+        85,
+        898
+      ]
+    },
+    {
+      "frame_number": 161,
+      "timestamp": "2026-01-14T10:26:18.501415",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6646892428398132,
+      "bbox": [
+        2,
+        347,
+        1365,
+        1063
+      ]
+    },
+    {
+      "frame_number": 161,
+      "timestamp": "2026-01-14T10:26:18.501450",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5235857367515564,
+      "bbox": [
+        0,
+        621,
+        85,
+        900
+      ]
+    },
+    {
+      "frame_number": 161,
+      "timestamp": "2026-01-14T10:26:18.501469",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.26159369945526123,
+      "bbox": [
+        309,
+        703,
+        415,
+        747
+      ]
+    },
+    {
+      "frame_number": 162,
+      "timestamp": "2026-01-14T10:26:18.571868",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6646892428398132,
+      "bbox": [
+        2,
+        347,
+        1365,
+        1063
+      ]
+    },
+    {
+      "frame_number": 162,
+      "timestamp": "2026-01-14T10:26:18.571899",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5235857367515564,
+      "bbox": [
+        0,
+        621,
+        85,
+        900
+      ]
+    },
+    {
+      "frame_number": 162,
+      "timestamp": "2026-01-14T10:26:18.571916",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.26159369945526123,
+      "bbox": [
+        309,
+        703,
+        415,
+        747
+      ]
+    },
+    {
+      "frame_number": 163,
+      "timestamp": "2026-01-14T10:26:18.657533",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6646892428398132,
+      "bbox": [
+        2,
+        347,
+        1365,
+        1063
+      ]
+    },
+    {
+      "frame_number": 163,
+      "timestamp": "2026-01-14T10:26:18.657570",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5235857367515564,
+      "bbox": [
+        0,
+        621,
+        85,
+        900
+      ]
+    },
+    {
+      "frame_number": 163,
+      "timestamp": "2026-01-14T10:26:18.657591",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.26159369945526123,
+      "bbox": [
+        309,
+        703,
+        415,
+        747
+      ]
+    },
+    {
+      "frame_number": 164,
+      "timestamp": "2026-01-14T10:26:18.780535",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6940794587135315,
+      "bbox": [
+        1,
+        346,
+        1366,
+        1065
+      ]
+    },
+    {
+      "frame_number": 164,
+      "timestamp": "2026-01-14T10:26:18.780566",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5293288826942444,
+      "bbox": [
+        0,
+        624,
+        83,
+        900
+      ]
+    },
+    {
+      "frame_number": 164,
+      "timestamp": "2026-01-14T10:26:18.780584",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2645415961742401,
+      "bbox": [
+        309,
+        702,
+        419,
+        747
+      ]
+    },
+    {
+      "frame_number": 165,
+      "timestamp": "2026-01-14T10:26:18.894326",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6933839917182922,
+      "bbox": [
+        3,
+        347,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 165,
+      "timestamp": "2026-01-14T10:26:18.894352",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4401698708534241,
+      "bbox": [
+        0,
+        681,
+        70,
+        898
+      ]
+    },
+    {
+      "frame_number": 166,
+      "timestamp": "2026-01-14T10:26:18.988652",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6933839917182922,
+      "bbox": [
+        3,
+        347,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 166,
+      "timestamp": "2026-01-14T10:26:18.988678",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.4401698708534241,
+      "bbox": [
+        0,
+        681,
+        70,
+        898
+      ]
+    },
+    {
+      "frame_number": 167,
+      "timestamp": "2026-01-14T10:26:19.097202",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6855334639549255,
+      "bbox": [
+        3,
+        345,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 167,
+      "timestamp": "2026-01-14T10:26:19.097229",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3638859689235687,
+      "bbox": [
+        0,
+        686,
+        66,
+        895
+      ]
+    },
+    {
+      "frame_number": 167,
+      "timestamp": "2026-01-14T10:26:19.097247",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.25383180379867554,
+      "bbox": [
+        309,
+        702,
+        419,
+        746
+      ]
+    },
+    {
+      "frame_number": 168,
+      "timestamp": "2026-01-14T10:26:19.191161",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6855334639549255,
+      "bbox": [
+        3,
+        345,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 168,
+      "timestamp": "2026-01-14T10:26:19.191189",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3638859689235687,
+      "bbox": [
+        0,
+        686,
+        66,
+        895
+      ]
+    },
+    {
+      "frame_number": 168,
+      "timestamp": "2026-01-14T10:26:19.191206",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.25383180379867554,
+      "bbox": [
+        309,
+        702,
+        419,
+        746
+      ]
+    },
+    {
+      "frame_number": 169,
+      "timestamp": "2026-01-14T10:26:19.298810",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7054895162582397,
+      "bbox": [
+        3,
+        346,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 169,
+      "timestamp": "2026-01-14T10:26:19.298838",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3355112373828888,
+      "bbox": [
+        0,
+        687,
+        65,
+        898
+      ]
+    },
+    {
+      "frame_number": 170,
+      "timestamp": "2026-01-14T10:26:19.383488",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7054895162582397,
+      "bbox": [
+        3,
+        346,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 170,
+      "timestamp": "2026-01-14T10:26:19.383515",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3355112373828888,
+      "bbox": [
+        0,
+        687,
+        65,
+        898
+      ]
+    },
+    {
+      "frame_number": 171,
+      "timestamp": "2026-01-14T10:26:19.475520",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7054895162582397,
+      "bbox": [
+        3,
+        346,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 171,
+      "timestamp": "2026-01-14T10:26:19.475548",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.3355112373828888,
+      "bbox": [
+        0,
+        687,
+        65,
+        898
+      ]
+    },
+    {
+      "frame_number": 172,
+      "timestamp": "2026-01-14T10:26:19.570807",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6973235607147217,
+      "bbox": [
+        2,
+        346,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 172,
+      "timestamp": "2026-01-14T10:26:19.570835",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27507367730140686,
+      "bbox": [
+        0,
+        685,
+        63,
+        897
+      ]
+    },
+    {
+      "frame_number": 173,
+      "timestamp": "2026-01-14T10:26:19.661151",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6973235607147217,
+      "bbox": [
+        2,
+        346,
+        1367,
+        1065
+      ]
+    },
+    {
+      "frame_number": 173,
+      "timestamp": "2026-01-14T10:26:19.661179",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.27507367730140686,
+      "bbox": [
+        0,
+        685,
+        63,
+        897
+      ]
+    },
+    {
+      "frame_number": 174,
+      "timestamp": "2026-01-14T10:26:19.764402",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7017725110054016,
+      "bbox": [
+        2,
+        345,
+        1367,
+        1064
+      ]
+    },
+    {
+      "frame_number": 174,
+      "timestamp": "2026-01-14T10:26:19.764429",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.28146180510520935,
+      "bbox": [
+        0,
+        683,
+        62,
+        898
+      ]
+    },
+    {
+      "frame_number": 174,
+      "timestamp": "2026-01-14T10:26:19.764447",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.251618355512619,
+      "bbox": [
+        309,
+        702,
+        417,
+        747
+      ]
+    },
+    {
+      "frame_number": 175,
+      "timestamp": "2026-01-14T10:26:19.850954",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7017725110054016,
+      "bbox": [
+        2,
+        345,
+        1367,
+        1064
+      ]
+    },
+    {
+      "frame_number": 175,
+      "timestamp": "2026-01-14T10:26:19.850982",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.28146180510520935,
+      "bbox": [
+        0,
+        683,
+        62,
+        898
+      ]
+    },
+    {
+      "frame_number": 175,
+      "timestamp": "2026-01-14T10:26:19.850999",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.251618355512619,
+      "bbox": [
+        309,
+        702,
+        417,
+        747
+      ]
+    },
+    {
+      "frame_number": 176,
+      "timestamp": "2026-01-14T10:26:19.971254",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7050861120223999,
+      "bbox": [
+        3,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 177,
+      "timestamp": "2026-01-14T10:26:20.058714",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7050861120223999,
+      "bbox": [
+        3,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 178,
+      "timestamp": "2026-01-14T10:26:20.173498",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7319894433021545,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 179,
+      "timestamp": "2026-01-14T10:26:20.262779",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7319894433021545,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 180,
+      "timestamp": "2026-01-14T10:26:20.380606",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7021099925041199,
+      "bbox": [
+        3,
+        345,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 181,
+      "timestamp": "2026-01-14T10:26:20.475720",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7021099925041199,
+      "bbox": [
+        3,
+        345,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 182,
+      "timestamp": "2026-01-14T10:26:20.594772",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7151051163673401,
+      "bbox": [
+        2,
+        345,
+        1369,
+        1065
+      ]
+    },
+    {
+      "frame_number": 183,
+      "timestamp": "2026-01-14T10:26:20.710240",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5276997089385986,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 184,
+      "timestamp": "2026-01-14T10:26:20.781255",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5276997089385986,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 185,
+      "timestamp": "2026-01-14T10:26:20.864326",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5276997089385986,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 186,
+      "timestamp": "2026-01-14T10:26:20.985010",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.654141366481781,
+      "bbox": [
+        3,
+        345,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 187,
+      "timestamp": "2026-01-14T10:26:21.076241",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.654141366481781,
+      "bbox": [
+        3,
+        345,
+        1370,
+        1065
+      ]
+    },
+    {
+      "frame_number": 188,
+      "timestamp": "2026-01-14T10:26:21.190940",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5196319222450256,
+      "bbox": [
+        2,
+        343,
+        1371,
+        1066
+      ]
+    },
+    {
+      "frame_number": 189,
+      "timestamp": "2026-01-14T10:26:21.283943",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5196319222450256,
+      "bbox": [
+        2,
+        343,
+        1371,
+        1066
+      ]
+    },
+    {
+      "frame_number": 190,
+      "timestamp": "2026-01-14T10:26:21.401920",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6201851963996887,
+      "bbox": [
+        2,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 191,
+      "timestamp": "2026-01-14T10:26:21.504288",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6483098268508911,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 191,
+      "timestamp": "2026-01-14T10:26:21.504314",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.27534717321395874,
+      "bbox": [
+        309,
+        702,
+        412,
+        746
+      ]
+    },
+    {
+      "frame_number": 192,
+      "timestamp": "2026-01-14T10:26:21.604583",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6483098268508911,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 192,
+      "timestamp": "2026-01-14T10:26:21.604607",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.27534717321395874,
+      "bbox": [
+        309,
+        702,
+        412,
+        746
+      ]
+    },
+    {
+      "frame_number": 193,
+      "timestamp": "2026-01-14T10:26:21.718556",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6366362571716309,
+      "bbox": [
+        2,
+        344,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 194,
+      "timestamp": "2026-01-14T10:26:21.800787",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6366362571716309,
+      "bbox": [
+        2,
+        344,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 195,
+      "timestamp": "2026-01-14T10:26:21.887368",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6366362571716309,
+      "bbox": [
+        2,
+        344,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 196,
+      "timestamp": "2026-01-14T10:26:22.028447",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999031662940979,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 197,
+      "timestamp": "2026-01-14T10:26:22.128520",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999031662940979,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 198,
+      "timestamp": "2026-01-14T10:26:22.203372",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999031662940979,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 199,
+      "timestamp": "2026-01-14T10:26:22.283772",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999031662940979,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 200,
+      "timestamp": "2026-01-14T10:26:22.414474",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999031662940979,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 201,
+      "timestamp": "2026-01-14T10:26:22.493567",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5999031662940979,
+      "bbox": [
+        3,
+        344,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 202,
+      "timestamp": "2026-01-14T10:26:22.621538",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6009756326675415,
+      "bbox": [
+        2,
+        343,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 202,
+      "timestamp": "2026-01-14T10:26:22.621565",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.26193392276763916,
+      "bbox": [
+        309,
+        702,
+        408,
+        745
+      ]
+    },
+    {
+      "frame_number": 203,
+      "timestamp": "2026-01-14T10:26:22.704554",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6009756326675415,
+      "bbox": [
+        2,
+        343,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 203,
+      "timestamp": "2026-01-14T10:26:22.704578",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.26193392276763916,
+      "bbox": [
+        309,
+        702,
+        408,
+        745
+      ]
+    },
+    {
+      "frame_number": 204,
+      "timestamp": "2026-01-14T10:26:22.824338",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6543225049972534,
+      "bbox": [
+        2,
+        344,
+        1371,
+        1066
+      ]
+    },
+    {
+      "frame_number": 205,
+      "timestamp": "2026-01-14T10:26:22.915608",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6543225049972534,
+      "bbox": [
+        2,
+        344,
+        1371,
+        1066
+      ]
+    },
+    {
+      "frame_number": 206,
+      "timestamp": "2026-01-14T10:26:23.047575",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5840681195259094,
+      "bbox": [
+        2,
+        343,
+        1369,
+        1066
+      ]
+    },
+    {
+      "frame_number": 207,
+      "timestamp": "2026-01-14T10:26:23.157594",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5194645524024963,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 208,
+      "timestamp": "2026-01-14T10:26:23.229332",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5194645524024963,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 209,
+      "timestamp": "2026-01-14T10:26:23.314020",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5194645524024963,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 210,
+      "timestamp": "2026-01-14T10:26:23.446321",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5194645524024963,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 211,
+      "timestamp": "2026-01-14T10:26:23.535442",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.5194645524024963,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 212,
+      "timestamp": "2026-01-14T10:26:23.665209",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.6494775414466858,
+      "bbox": [
+        3,
+        343,
+        1372,
+        1065
+      ]
+    },
+    {
+      "frame_number": 213,
+      "timestamp": "2026-01-14T10:26:23.780981",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.616266667842865,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 214,
+      "timestamp": "2026-01-14T10:26:23.851793",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.616266667842865,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 215,
+      "timestamp": "2026-01-14T10:26:23.941179",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.616266667842865,
+      "bbox": [
+        2,
+        343,
+        1370,
+        1066
+      ]
+    },
+    {
+      "frame_number": 216,
+      "timestamp": "2026-01-14T10:26:24.064258",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7069949507713318,
+      "bbox": [
+        3,
+        345,
+        1368,
+        1065
+      ]
+    },
+    {
+      "frame_number": 216,
+      "timestamp": "2026-01-14T10:26:24.064285",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.40619564056396484,
+      "bbox": [
+        0,
+        688,
+        67,
+        886
+      ]
+    },
+    {
+      "frame_number": 216,
+      "timestamp": "2026-01-14T10:26:24.064301",
+      "class_id": 64,
+      "class_name": "mouse",
+      "confidence": 0.2623889148235321,
+      "bbox": [
+        309,
+        701,
+        417,
+        746
+      ]
+    },
+    {
+      "frame_number": 217,
+      "timestamp": "2026-01-14T10:26:24.169662",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7299425005912781,
+      "bbox": [
+        2,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 217,
+      "timestamp": "2026-01-14T10:26:24.169697",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.593987762928009,
+      "bbox": [
+        0,
+        465,
+        181,
+        915
+      ]
+    },
+    {
+      "frame_number": 218,
+      "timestamp": "2026-01-14T10:26:24.268650",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.7299425005912781,
+      "bbox": [
+        2,
+        345,
+        1371,
+        1065
+      ]
+    },
+    {
+      "frame_number": 218,
+      "timestamp": "2026-01-14T10:26:24.268739",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.593987762928009,
+      "bbox": [
+        0,
+        465,
+        181,
+        915
+      ]
+    },
+    {
+      "frame_number": 219,
+      "timestamp": "2026-01-14T10:26:24.392666",
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.671303391456604,
+      "bbox": [
+        1,
+        342,
+        1369,
+        1064
+      ]
+    }
+  ]
+}

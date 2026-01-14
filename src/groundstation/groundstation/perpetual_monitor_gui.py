@@ -257,6 +257,17 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.yolo_running: Dict[str, bool] = {}  # {namespace: is_running}
         self.yolo_detections: Dict[str, list] = {}  # {namespace: [detections]}
         
+        # Video/Telemetry recording state
+        self.recording_running: Dict[str, bool] = {}  # {namespace: is_recording}
+        self.recording_dir = "/WildPerpetua/recordings"  # Default recording directory
+        self.recording_sessions: Dict[str, dict] = {}  # {namespace: session_data}
+        self.recording_timers: Dict[str, object] = {}  # {namespace: ui.timer}
+        self.latest_telemetry: Dict[str, dict] = {}  # {namespace: telemetry_data} - latest telemetry for recording
+        
+        # Create default recording directory
+        import os
+        os.makedirs(self.recording_dir, exist_ok=True)
+        
         # UI update throttling - reduces browser lag by limiting update frequency
         # Stores last emit time per namespace per event type
         self._last_emit_time: Dict[str, Dict[str, float]] = {}  # {event_type: {namespace: timestamp}}
@@ -351,6 +362,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             with ui.row().classes('absolute top-0 left-0 right-0 p-4 items-center justify-between').style('background: rgba(0,0,0,0.7); z-index: 100;'):
                 ui.label(f'📹 {namespace} - Live Video Feed').classes('text-white text-xl font-bold')
                 with ui.row().classes('gap-2 items-center'):
+                    # Recording controls
+                    rec_status = ui.label('⚫ Not Recording').classes('text-white text-sm mr-4')
+                    rec_status_ref = rec_status
+                    rec_btn = ui.button('Start Recording', icon='fiber_manual_record').props('flat color=white size=sm')
+                    rec_stop_btn = ui.button('Stop Recording', icon='stop').props('flat color=red size=sm').classes('hidden')
+                    
+                    ui.label('|').classes('text-gray-500 mx-2')
+                    
                     # YOLO Detection controls
                     yolo_status = ui.label('🔴 YOLO Off').classes('text-white text-sm mr-4')
                     yolo_status_ref = yolo_status
@@ -501,6 +520,27 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     z-index: 50;
                 ">
                     📡 Telemetry: waiting...
+                </div>
+                
+                <!-- Recording status overlay - top center right -->
+                <div id="recordingStatus_{namespace}" style="
+                    position: absolute;
+                    top: 80px;
+                    left: 50%;
+                    margin-left: 150px;
+                    background: rgba(255, 0, 0, 0.85);
+                    color: #fff;
+                    font-family: 'Courier New', monospace;
+                    font-size: 14px;
+                    font-weight: bold;
+                    padding: 8px 15px;
+                    border-radius: 8px;
+                    z-index: 50;
+                    display: none;
+                ">
+                    <span id="recordingIndicator_{namespace}">🔴 REC</span>
+                    <span id="recordingTime_{namespace}">00:00:00</span>
+                    <span id="recordingFrames_{namespace}">(0 frames)</span>
                 </div>
             </div>
             '''
@@ -778,6 +818,386 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         yolo_btn.on_click(show_yolo_upload_dialog)
         yolo_stop_btn.on_click(stop_yolo)
         
+        # ====================================================================
+        # VIDEO/TELEMETRY RECORDING
+        # ====================================================================
+        
+        # Initialize recording state for this namespace
+        self.recording_running[namespace] = False
+        self.latest_telemetry[namespace] = {}
+        
+        def show_recording_dialog():
+            """Show dialog to configure and start recording."""
+            with ui.dialog() as dialog, ui.card().classes('p-4 w-96'):
+                ui.label('📹 Start Recording').classes('text-xl font-bold mb-2')
+                ui.label('Configure recording settings').classes('text-gray-600 mb-4')
+                
+                # Storage path input
+                ui.label('Storage Directory:').classes('text-sm font-medium')
+                path_input = ui.input(
+                    value=self.recording_dir,
+                    placeholder='/path/to/recordings'
+                ).classes('w-full mb-4')
+                
+                # Info about what will be recorded
+                with ui.column().classes('bg-gray-100 p-3 rounded mb-4'):
+                    ui.label('Will record:').classes('font-medium text-sm')
+                    ui.label('• Raw video (MP4 @ 30 FPS)').classes('text-xs text-gray-600')
+                    ui.label('• Telemetry (CSV synced with frames)').classes('text-xs text-gray-600')
+                    if self.yolo_running.get(namespace, False):
+                        ui.label('• Annotated video with YOLO boxes').classes('text-xs text-green-600')
+                        ui.label('• Detections (JSON + CSV)').classes('text-xs text-green-600')
+                    else:
+                        ui.label('• YOLO not active - no annotations').classes('text-xs text-gray-400')
+                
+                async def start_recording_click():
+                    """Start the recording session."""
+                    self.recording_dir = path_input.value
+                    dialog.close()
+                    await start_recording()
+                
+                with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                    ui.button('Cancel', on_click=dialog.close).props('flat')
+                    ui.button('Start Recording', on_click=start_recording_click).props('color=red')
+            
+            dialog.open()
+        
+        async def start_recording():
+            """Initialize and start recording session."""
+            import os
+            import csv
+            import json
+            import cv2
+            
+            # Create output directory
+            os.makedirs(self.recording_dir, exist_ok=True)
+            
+            # Generate timestamp for filenames
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            base_filename = f"{namespace}_{timestamp}"
+            
+            # Initialize session data
+            # Use AVI format with XVID codec for better FFmpeg compatibility
+            session = {
+                'start_time': time.time(),
+                'frame_count': 0,
+                'base_filename': base_filename,
+                'output_dir': self.recording_dir,
+                'raw_video_path': os.path.join(self.recording_dir, f"{base_filename}_raw.avi"),
+                'annotated_video_path': os.path.join(self.recording_dir, f"{base_filename}_annotated.avi"),
+                'telemetry_path': os.path.join(self.recording_dir, f"{base_filename}_telemetry.csv"),
+                'detections_json_path': os.path.join(self.recording_dir, f"{base_filename}_detections.json"),
+                'detections_csv_path': os.path.join(self.recording_dir, f"{base_filename}_detections.csv"),
+                'raw_writer': None,
+                'annotated_writer': None,
+                'telemetry_file': None,
+                'telemetry_writer': None,
+                'detections_list': [],
+                'video_initialized': False,
+                'yolo_active_at_start': self.yolo_running.get(namespace, False)
+            }
+            
+            # Open telemetry CSV
+            session['telemetry_file'] = open(session['telemetry_path'], 'w', newline='')
+            session['telemetry_writer'] = csv.writer(session['telemetry_file'])
+            # Write header
+            session['telemetry_writer'].writerow([
+                'frame_number', 'timestamp', 'elapsed_seconds',
+                'original_width', 'original_height',
+                'latitude', 'longitude', 'altitude_asl', 'altitude_agl',
+                'satellite_count', 'gimbal_pitch', 'gimbal_yaw', 'gimbal_roll',
+                'aircraft_pitch', 'aircraft_yaw', 'aircraft_roll',
+                'velocity_x', 'velocity_y', 'velocity_z', 'speed',
+                'battery_percent'
+            ])
+            
+            # If YOLO is active, prepare detections CSV
+            if session['yolo_active_at_start']:
+                session['detections_csv_file'] = open(session['detections_csv_path'], 'w', newline='')
+                session['detections_csv_writer'] = csv.writer(session['detections_csv_file'])
+                session['detections_csv_writer'].writerow([
+                    'frame_number', 'timestamp', 'class_id', 'class_name',
+                    'confidence', 'x1', 'y1', 'x2', 'y2'
+                ])
+            
+            self.recording_sessions[namespace] = session
+            self.recording_running[namespace] = True
+            
+            # Update UI
+            rec_status_ref.text = '🔴 Recording'
+            rec_status_ref.style('color: #ef4444')
+            rec_btn.classes(remove='', add='hidden')
+            rec_stop_btn.classes(remove='hidden', add='')
+            
+            # Show recording overlay
+            ui.run_javascript(f'''
+                document.getElementById("recordingStatus_{namespace}").style.display = "block";
+            ''')
+            
+            ui.notify(f'Recording started: {base_filename}', type='positive')
+            self.get_logger().info(f"[Recording] Started session: {session['raw_video_path']}")
+            
+            # Start recording loop
+            start_recording_loop()
+        
+        def start_recording_loop():
+            """Start the recording capture loop at 30 FPS."""
+            import base64
+            import cv2
+            import numpy as np
+            
+            async def capture_frame():
+                """Capture and record a single frame."""
+                if not self.recording_running.get(namespace, False):
+                    return
+                
+                session = self.recording_sessions.get(namespace)
+                if not session:
+                    return
+                
+                try:
+                    # Capture frame and telemetry from browser
+                    capture_data = await ui.run_javascript(f'''
+                        (function() {{
+                            const video = document.getElementById("fullscreenVideo_{namespace}");
+                            if (!video || video.readyState < 2 || video.videoWidth === 0) return null;
+                            
+                            const canvas = document.createElement('canvas');
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(video, 0, 0);
+                            
+                            return {{
+                                data: canvas.toDataURL('image/jpeg', 0.95),
+                                width: video.videoWidth,
+                                height: video.videoHeight,
+                                telemetry: window.latestTelemetry_{namespace} || {{}}
+                            }};
+                        }})();
+                    ''', timeout=1.0)
+                    
+                    if not capture_data or not capture_data.get('data'):
+                        return
+                    
+                    # Store latest telemetry for this namespace
+                    if capture_data.get('telemetry'):
+                        self.latest_telemetry[namespace] = capture_data['telemetry']
+                    
+                    # Decode frame
+                    img_data = capture_data['data'].split(',')[1]
+                    img_bytes = base64.b64decode(img_data)
+                    img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+                    frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                    
+                    if frame is None:
+                        return
+                    
+                    # Store original frame dimensions for telemetry
+                    orig_h, orig_w = frame.shape[:2]
+                    
+                    # Target output resolution (fixed 1920x1080)
+                    TARGET_WIDTH = 1920
+                    TARGET_HEIGHT = 1080
+                    
+                    # Resize frame to target resolution
+                    frame_resized = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                    
+                    # Initialize video writers on first frame
+                    if not session['video_initialized']:
+                        # Use XVID codec for better compatibility
+                        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                        session['raw_writer'] = cv2.VideoWriter(
+                            session['raw_video_path'], fourcc, 30.0, (TARGET_WIDTH, TARGET_HEIGHT)
+                        )
+                        if session['yolo_active_at_start']:
+                            session['annotated_writer'] = cv2.VideoWriter(
+                                session['annotated_video_path'], fourcc, 30.0, (TARGET_WIDTH, TARGET_HEIGHT)
+                            )
+                        session['video_initialized'] = True
+                        self.get_logger().info(f"[Recording] Video initialized: {TARGET_WIDTH}x{TARGET_HEIGHT} (original: {orig_w}x{orig_h})")
+                    
+                    # Write resized raw frame
+                    session['raw_writer'].write(frame_resized)
+                    
+                    # Get current telemetry
+                    telem = self.latest_telemetry.get(namespace, {})
+                    elapsed = time.time() - session['start_time']
+                    frame_num = session['frame_count']
+                    
+                    # Write telemetry row (includes original frame dimensions)
+                    vx = telem.get('velocityX', 0)
+                    vy = telem.get('velocityY', 0)
+                    vz = telem.get('velocityZ', 0)
+                    speed = (vx**2 + vy**2 + vz**2) ** 0.5
+                    
+                    session['telemetry_writer'].writerow([
+                        frame_num,
+                        datetime.now().isoformat(),
+                        f"{elapsed:.3f}",
+                        orig_w,
+                        orig_h,
+                        telem.get('latitude', 0),
+                        telem.get('longitude', 0),
+                        telem.get('altitudeASL', 0),
+                        telem.get('altitudeAGL', 0),
+                        telem.get('satelliteCount', 0),
+                        telem.get('gimbalPitch', 0),
+                        telem.get('gimbalYaw', 0),
+                        telem.get('gimbalRoll', 0),
+                        telem.get('aircraftPitch', 0),
+                        telem.get('aircraftYaw', 0),
+                        telem.get('aircraftRoll', 0),
+                        vx, vy, vz, f"{speed:.2f}",
+                        telem.get('batteryPercent', 0)
+                    ])
+                    
+                    # If YOLO active, create annotated frame and save detections
+                    if session['yolo_active_at_start'] and session['annotated_writer']:
+                        detections = self.yolo_detections.get(namespace, [])
+                        annotated_frame = frame_resized.copy()
+                        
+                        # Scale factors for bounding boxes (original -> 1920x1080)
+                        scale_x = TARGET_WIDTH / orig_w
+                        scale_y = TARGET_HEIGHT / orig_h
+                        
+                        # Draw detections on annotated frame
+                        colors = [
+                            (56, 56, 255), (151, 157, 255), (31, 112, 255), (29, 178, 255),
+                            (49, 210, 207), (10, 249, 72), (23, 204, 146), (134, 219, 61),
+                            (52, 147, 26), (187, 212, 0), (168, 153, 44), (255, 194, 0),
+                            (147, 69, 52), (255, 115, 100), (236, 24, 0), (255, 56, 132)
+                        ]
+                        
+                        for det in detections:
+                            # Original coordinates (from YOLO on original frame)
+                            ox1, oy1, ox2, oy2 = [int(v) for v in det['box']]
+                            # Scale to resized frame
+                            x1 = int(ox1 * scale_x)
+                            y1 = int(oy1 * scale_y)
+                            x2 = int(ox2 * scale_x)
+                            y2 = int(oy2 * scale_y)
+                            
+                            cls_id = det['classId']
+                            cls_name = det['className']
+                            conf = det['score']
+                            color = colors[cls_id % len(colors)]
+                            
+                            # Draw box on scaled frame
+                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
+                            
+                            # Draw label
+                            label = f"{cls_name} {conf*100:.0f}%"
+                            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                            cv2.rectangle(annotated_frame, (x1, y1-th-10), (x1+tw+10, y1), color, -1)
+                            cv2.putText(annotated_frame, label, (x1+5, y1-5),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                            
+                            # Save detection to list and CSV (original coordinates)
+                            det_record = {
+                                'frame_number': frame_num,
+                                'timestamp': datetime.now().isoformat(),
+                                'class_id': cls_id,
+                                'class_name': cls_name,
+                                'confidence': conf,
+                                'bbox': [ox1, oy1, ox2, oy2]  # Original coordinates
+                            }
+                            session['detections_list'].append(det_record)
+                            session['detections_csv_writer'].writerow([
+                                frame_num, datetime.now().isoformat(),
+                                cls_id, cls_name, f"{conf:.4f}",
+                                ox1, oy1, ox2, oy2  # Original coordinates
+                            ])
+                        
+                        session['annotated_writer'].write(annotated_frame)
+                    
+                    session['frame_count'] += 1
+                    
+                    # Update UI every 10 frames
+                    if frame_num % 10 == 0:
+                        elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed))
+                        ui.run_javascript(f'''
+                            document.getElementById("recordingTime_{namespace}").textContent = "{elapsed_str}";
+                            document.getElementById("recordingFrames_{namespace}").textContent = "({frame_num} frames)";
+                        ''')
+                
+                except Exception as ex:
+                    self.get_logger().error(f"[Recording] Frame capture error: {ex}")
+            
+            # 30 FPS = ~33ms interval
+            timer = ui.timer(1/30, capture_frame)
+            self.recording_timers[namespace] = timer
+            self.get_logger().info(f"[Recording] Capture loop started at 30 FPS for {namespace}")
+        
+        def stop_recording():
+            """Stop recording and finalize files."""
+            import json
+            
+            self.recording_running[namespace] = False
+            
+            # Cancel timer
+            if namespace in self.recording_timers:
+                self.recording_timers[namespace].cancel()
+                del self.recording_timers[namespace]
+            
+            session = self.recording_sessions.get(namespace)
+            if session:
+                # Close video writers
+                if session.get('raw_writer'):
+                    session['raw_writer'].release()
+                if session.get('annotated_writer'):
+                    session['annotated_writer'].release()
+                
+                # Close telemetry file
+                if session.get('telemetry_file'):
+                    session['telemetry_file'].close()
+                
+                # Save detections JSON and close CSV
+                if session.get('yolo_active_at_start'):
+                    # Save JSON
+                    with open(session['detections_json_path'], 'w') as f:
+                        json.dump({
+                            'drone': namespace,
+                            'recording_start': datetime.fromtimestamp(session['start_time']).isoformat(),
+                            'total_frames': session['frame_count'],
+                            'detections': session['detections_list']
+                        }, f, indent=2)
+                    
+                    # Close CSV
+                    if session.get('detections_csv_file'):
+                        session['detections_csv_file'].close()
+                
+                elapsed = time.time() - session['start_time']
+                self.get_logger().info(
+                    f"[Recording] Stopped: {session['frame_count']} frames, "
+                    f"{elapsed:.1f}s, saved to {session['output_dir']}"
+                )
+                
+                ui.notify(
+                    f"Recording saved: {session['frame_count']} frames ({elapsed:.1f}s)",
+                    type='positive'
+                )
+                
+                del self.recording_sessions[namespace]
+            
+            # Update UI
+            rec_status_ref.text = '⚫ Not Recording'
+            rec_status_ref.style('color: white')
+            rec_btn.classes(remove='hidden', add='')
+            rec_stop_btn.classes(remove='', add='hidden')
+            
+            # Hide recording overlay
+            ui.run_javascript(f'''
+                document.getElementById("recordingStatus_{namespace}").style.display = "none";
+            ''')
+        
+        rec_btn.on_click(show_recording_dialog)
+        rec_stop_btn.on_click(stop_recording)
+        
+        # ====================================================================
+        # END RECORDING SECTION
+        # ====================================================================
+        
         # YOLO drawing JavaScript (client-side rendering only)
         ui.run_javascript(f'''
         (function setupYOLOCanvas() {{
@@ -982,6 +1402,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         if (!event.data) return;
                         const meta = JSON.parse(event.data);
                         updateTelemetry(meta);
+                        
+                        // Store latest telemetry globally for recording
+                        window.latestTelemetry_{namespace} = meta;
+                        
                         addDebug("Telemetry received: frame " + (meta.frameNumber || "N/A"));
                     }} catch (e) {{
                         addDebug("Telemetry parse error: " + e.message);

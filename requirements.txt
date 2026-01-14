@@ -29,3 +29,4 @@ orjson==3.11.4
 
 # Computer Vision / Object Detection
 ultralytics==8.3.241
+opencv-python==4.10.0.84
