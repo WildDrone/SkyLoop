@@ -3724,13 +3724,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify(f'No stored IP for {namespace}', type='warning')
             return
 
-
+        """
         # Stop any ongoing WebRTC stream before reconnecting
         try:
             self._stop_webrtc_stream(namespace)
         except Exception:
             pass
-
+        """
         ui.notify(f'Reconnecting {namespace}...', type='info')
 
         if not self.disconnect_drone(namespace):

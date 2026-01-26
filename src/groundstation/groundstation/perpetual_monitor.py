@@ -710,7 +710,7 @@ class PerpetualMonitorNode(Node):
         mc.get_waypoint_reached = lambda ns: self.drones[ns].waypoint_reached if ns in self.drones else False
         mc.get_altitude_reached = lambda ns: self.drones[ns].altitude_reached if ns in self.drones else False
         mc.get_configured_speed = self._get_active_navigation_speed  # Returns speed based on current nav mode
-        mc.get_connected_drones = lambda: list(self.drones.keys())
+        mc.get_connected_drones = lambda: [ns for ns, d in self.drones.items() if d.is_connected]
         mc.get_rth_predictor_datapoints = self._get_rth_predictor_datapoints
         
         # Status callbacks
@@ -835,7 +835,9 @@ class PerpetualMonitorNode(Node):
         if namespace is None:
             namespace = f"drone_{len(self.drones) + 1}"
         
-        if namespace in self.drones:
+        # Allow reconnection of a previously disconnected drone while preserving its color/identity
+        existing_drone = self.drones.get(namespace)
+        if existing_drone and existing_drone.is_connected:
             self.get_logger().warning(f"Drone {namespace} already connected")
             return False
         
@@ -878,10 +880,13 @@ class PerpetualMonitorNode(Node):
             self.get_logger().error(f"Failed to launch controller node: {e}")
             return False
         
-        # Assign a unique color to this drone
+        # Preserve prior color if this namespace existed; otherwise assign next palette color
         drone_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
-        color_idx = len(self.drones) % len(drone_colors)
-        drone_color = drone_colors[color_idx]
+        if existing_drone and existing_drone.color:
+            drone_color = existing_drone.color
+        else:
+            color_idx = len(self.drones) % len(drone_colors)
+            drone_color = drone_colors[color_idx]
         
         # Create drone data entry
         drone = DroneData(
@@ -972,13 +977,14 @@ class PerpetualMonitorNode(Node):
         if hasattr(self, 'mission_controller') and namespace in self.mission_controller.drone_missions:
             del self.mission_controller.drone_missions[namespace]
         
-        # Clean up RTH predictor (close CSV file first)
+        # Clean up RTH predictor (close CSV file first). Keep entry to preserve history if needed.
         if namespace in self.rth_predictors:
             self.rth_predictors[namespace].close_csv()
             del self.rth_predictors[namespace]
         
-        # Remove drone data
-        del self.drones[namespace]
+        # Mark drone as disconnected but keep its data (color, namespace, last known state)
+        drone.is_connected = False
+        drone.state = DroneState.DISCONNECTED
         
         # Notify UI
         if self.ui_handler:
