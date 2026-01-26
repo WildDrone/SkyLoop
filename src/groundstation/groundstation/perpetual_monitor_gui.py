@@ -299,7 +299,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.trajectory_speed_label = None
         
         # Map settings
-        self.map_center = (49.306260, 4.593715)  # Default center
+        self.map_center = (14.475781, -90.881235)  # Default center
         
         # Drone colors for visualization
         self.drone_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
@@ -678,7 +678,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                             # Run YOLO inference
                             start_time = time.time()
                             
-                            results = self.yolo_model(frame, verbose=False, conf=0.25)
+                            results = self.yolo_model(frame, verbose=False, conf=0.41)
                             
                             inference_time = (time.time() - start_time) * 1000
                             
@@ -3594,6 +3594,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     with ui.row().classes('items-center gap-1'):
                         ui.button(icon='push_pin', on_click=lambda ns=namespace: self._pin_drone_location(ns)).props('flat dense round color=purple').tooltip('Pin').style('width: 36px; height: 36px;')
                         self.drone_buttons[namespace]['ready'] = ui.button(icon='check_circle', on_click=lambda ns=namespace: self._mark_drone_ready(ns)).props('flat dense round color=green').tooltip('Ready').style('width: 36px; height: 36px;')
+                        ui.button(icon='autorenew', on_click=lambda ns=namespace: self._reconnect_drone_ui(ns)).props('flat dense round color=primary').tooltip('Reconnect drone').style('width: 36px; height: 36px;')
                     
                     # Danger
                     with ui.row().classes('items-center gap-1'):
@@ -3711,6 +3712,35 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             self._refresh_drone_list()
         else:
             ui.notify(f'Cannot disconnect {namespace} (may be in flight)', type='warning')
+
+    def _reconnect_drone_ui(self, namespace: str):
+        """Reconnect a drone using its last known IP (disconnect then connect)."""
+        drone = self.drones.get(namespace)
+        if not drone:
+            ui.notify(f'{namespace} not found', type='warning')
+            return
+        ip = drone.ip_address
+        if not ip:
+            ui.notify(f'No stored IP for {namespace}', type='warning')
+            return
+
+
+        # Stop any ongoing WebRTC stream before reconnecting
+        try:
+            self._stop_webrtc_stream(namespace)
+        except Exception:
+            pass
+
+        ui.notify(f'Reconnecting {namespace}...', type='info')
+
+        if not self.disconnect_drone(namespace):
+            ui.notify(f'Failed to disconnect {namespace}', type='negative')
+            return
+
+        if self.connect_drone(ip, namespace):
+            ui.notify(f'{namespace} reconnected', type='positive')
+        else:
+            ui.notify(f'Reconnect failed for {namespace}', type='negative')
     
     def _start_webrtc_stream(self, namespace: str):
         """Start WebRTC video stream for a drone using native HTML5 video element."""
