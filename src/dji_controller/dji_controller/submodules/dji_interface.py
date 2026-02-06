@@ -18,7 +18,45 @@ import ast
 import json
 import socket
 import threading
+import time
 from datetime import datetime
+
+# Discovery Configuration
+DISCOVERY_PORT = 30000
+DISCOVERY_MSG = b"DISCOVER_WILDBRIDGE"
+DISCOVERY_RESPONSE_PREFIX = "WILDBRIDGE_HERE:"
+
+def discover_drone(timeout=5.0):
+    """
+    Discover WildBridge drone on the network using UDP broadcast.
+    Returns the IP address of the first drone found, or None if not found.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.settimeout(timeout)
+    
+    try:
+        # Send broadcast
+        sock.sendto(DISCOVERY_MSG, ('<broadcast>', DISCOVERY_PORT))
+        print(f"Broadcasting discovery message on port {DISCOVERY_PORT}...")
+        
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                data, addr = sock.recvfrom(1024)
+                message = data.decode('utf-8')
+                if message.startswith(DISCOVERY_RESPONSE_PREFIX):
+                    drone_ip = message.split(":")[1]
+                    print(f"Found WildBridge drone at {drone_ip}")
+                    return drone_ip
+            except socket.timeout:
+                break
+    except Exception as e:
+        print(f"Discovery error: {e}")
+    finally:
+        sock.close()
+    
+    return None
 
 # HTTP POST Command Endpoints (port 8080)
 EP_STICK = "/send/stick"  # expects a formatted string: "<leftX>,<leftY>,<rightX>,<rightY>"
@@ -52,8 +90,18 @@ class DJIInterface:
     """
     
     def __init__(self, IP_RC=""):
-        self.IP_RC = IP_RC
-        self.baseCommandUrl = f"http://{IP_RC}:8080"
+        if not IP_RC:
+            print("No IP provided, attempting to discover drone...")
+            discovered_ip = discover_drone()
+            if discovered_ip:
+                self.IP_RC = discovered_ip
+            else:
+                print("Drone discovery failed.")
+                self.IP_RC = ""
+        else:
+            self.IP_RC = IP_RC
+
+        self.baseCommandUrl = f"http://{self.IP_RC}:8080"
         self.telemetryPort = 8081
         self.videoSource = f"rtsp://aaa:aaa@{self.IP_RC}:8554/streaming/live/1"
         
@@ -85,6 +133,7 @@ class DJIInterface:
     
     def stopTelemetryStream(self):
         """Stop the telemetry stream and close the socket."""
+        
         self._running = False
         if self._telemetry_socket:
             try:
@@ -330,7 +379,14 @@ class DJIInterface:
         return self.requestSend(EP_LAND, "")
 
     def requestSendRTH(self):
-        """Command the drone to return to home."""
+        """Command the drone to return to home.
+        
+        Note: This first aborts any active mission and disables virtual stick
+        to prevent conflicts with RTH. Virtual stick mode can interfere with
+        RTH causing erratic behavior.
+        """
+        # CRITICAL: Disable virtual stick before RTH to prevent conflicts
+        self.requestAbortMission()
         return self.requestSend(EP_RTH, "")
 
     def requestSendGoToWP(self, latitude, longitude, altitude):

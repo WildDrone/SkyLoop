@@ -25,7 +25,7 @@ from groundstation.perpetual_monitor import (
     PerpetualMonitorNode, DroneData, DroneState, MissionPhase,
     MonitoringPoint, RelayMission, DroneRTHPredictor
 )
-from groundstation.mission_controller import MissionController, MissionState
+from groundstation.mission_controller import MissionController, MissionState, MissionMode
 
 
 # ============================================================================
@@ -297,6 +297,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.trajectory_mode = None
         self.trajectory_speed_slider = None
         self.trajectory_speed_label = None
+
+        # Rotation UI elements
+        self.rotation_order_label = None
+        self.rotation_select = None
+        self.rotation_next_label = None
         
         # Map settings
         self.map_center = (14.475781, -90.881235)  # Default center
@@ -2157,6 +2162,126 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Populate drone list after map is created (so arrows can be placed)
         self._refresh_drone_list()
+        
+        # Restore mission state from backend (critical on page refresh)
+        self._restore_mission_state_from_backend()
+    
+    def _restore_mission_state_from_backend(self):
+        """Restore mission UI state from backend mission_controller after page refresh.
+        
+        This ensures that if a mission is running in the backend, the UI displays it correctly
+        even after a page refresh.
+        """
+        if not self.mission_controller:
+            return
+        
+        # 1. Restore monitoring point from mission_controller config
+        if self.monitoring_point.is_set:
+            lat = self.monitoring_point.latitude
+            lon = self.monitoring_point.longitude
+            alt = self.monitoring_point.altitude
+            heading = self.monitoring_point.heading
+            
+            # Update input fields
+            if self.lat_input:
+                self.lat_input.value = f"{lat:.6f}"
+            if self.lon_input:
+                self.lon_input.value = f"{lon:.6f}"
+            if self.alt_input:
+                self.alt_input.value = f"{alt:.0f}"
+            if self.heading_input:
+                self.heading_input.value = f"{heading:.0f}"
+            
+            # Recreate marker on map
+            if self.map:
+                self.monitoring_marker = self.map.marker(latlng=[lat, lon])
+                self.monitoring_circle = self.map.generic_layer(
+                    name='circle',
+                    args=[[lat, lon], {'radius': 50, 'color': 'green', 'fillOpacity': 0.2, 'weight': 2}]
+                )
+        
+        # 2. Restore mission parameters from mission_controller config
+        if self.mission_controller.config:
+            try:
+                rth_alt = self.mission_controller.config.rth_altitude
+                if self.rth_alt_input and rth_alt > 0:
+                    self.rth_alt_input.value = str(int(rth_alt))
+            except:
+                pass
+            
+            try:
+                safety_buf = self.mission_controller.config.safety_buffer_seconds
+                if self.safety_buffer_input and safety_buf >= 0:
+                    self.safety_buffer_input.value = str(int(safety_buf))
+            except:
+                pass
+            
+            try:
+                min_batt = self.mission_controller.config.min_battery_to_launch
+                if self.min_battery_input and min_batt > 0:
+                    self.min_battery_input.value = str(int(min_batt))
+            except:
+                pass
+            
+            try:
+                min_sats = self.mission_controller.config.min_satellites
+                if self.min_satellites_input and min_sats > 0:
+                    self.min_satellites_input.value = str(int(min_sats))
+            except:
+                pass
+        
+        # 3. Restore mission mode toggle state
+        if self.mission_mode_switch:
+            is_free_flight = self.mission_controller.mission_mode == MissionMode.FREE_FLIGHT
+            self.mission_mode_switch.value = is_free_flight
+            if self.mission_mode_label:
+                label_text = '✈️ Free Flight' if is_free_flight else '📍 Monitor'
+                label_color = '#d32f2f' if is_free_flight else '#1976d2'
+                label_bg = '#ffebee' if is_free_flight else '#e3f2fd'
+                self.mission_mode_label.text = label_text
+                self.mission_mode_label.style(f'color: {label_color}; background: {label_bg};')
+        
+        # 4. Restore mission status display if mission is active
+        active_drones = list(self.mission_controller.drone_missions.keys())
+        if active_drones:
+            # Determine mission type
+            single_drone_mission = len(active_drones) == 1
+            mission_type = "Single Drone" if single_drone_mission else "Relay"
+            
+            if self.mission_status_label:
+                self.mission_status_label.text = mission_type
+                status_color = '#e8f5e9' if mission_type == "Single Drone" else '#e3f2fd'
+                status_text_color = '#2e7d32' if mission_type == "Single Drone" else '#1565c0'
+                self.mission_status_label.style(f'background: {status_color}; color: {status_text_color};')
+            
+            # Update active drone label
+            if self.active_drone_label:
+                # Get first drone in mission as active
+                active_ns = active_drones[0]
+                self.active_drone_label.text = active_ns
+                self.active_drone_label.style('background: #e8f5e9; color: #2e7d32;')
+            
+            # Restore mission timer if we have it
+            if active_drones and active_drones[0] in self.mission_controller.drone_missions:
+                mission = self.mission_controller.drone_missions[active_drones[0]]
+                if mission.mission_start_time and mission.mission_start_time > 0:
+                    # Mission has started, will continue to tick from the mission_controller's clock
+                    # The timer label will be updated by the relay countdown update events
+                    self._should_start_timer = True
+        else:
+            # No active mission
+            if self.mission_status_label:
+                self.mission_status_label.text = "Inactive"
+                self.mission_status_label.style('background: #eeeeee; color: #616161;')
+        
+        # 5. Update drones needed estimate
+        self._update_drones_needed()
+        
+        # 6. Build state machine display for any active drones
+        if active_drones:
+            self._build_state_machine_display()
+        
+        self._emit_log("[RESTORE] Mission state restored from backend")
     
     def _setup_event_subscriptions(self):
         """Set up event subscriptions for UI updates."""
@@ -2561,7 +2686,26 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self.relay_alert_icon.style('color: #c62828; animation: blink 0.5s infinite')
             
             if self.next_drone_label:
-                self.next_drone_label.text = f"Next: {next_drone}"
+                suffix = ''
+                try:
+                    override = self.mission_controller.get_next_drone_override() if self.mission_controller else None
+                    if override:
+                        suffix = ' (overridden)'
+                except Exception:
+                    pass
+                self.next_drone_label.text = f"Next: {next_drone}{suffix}"
+
+            # Update rotation labels
+            try:
+                if self.rotation_order_label and self.mission_controller:
+                    order = self.mission_controller.drone_order
+                    if order:
+                        display = " → ".join([f"[{ns}]" if ns == next_drone else ns for ns in order])
+                        self.rotation_order_label.text = f"Order: {display}"
+                if self.rotation_next_label:
+                    self.rotation_next_label.text = f"Next: {next_drone}{(' (overridden)' if self.mission_controller and self.mission_controller.get_next_drone_override() else '')}"
+            except Exception:
+                pass
             
             # Show drones needing reconnection (battery swap)
             if self.reconnect_label:
@@ -3003,10 +3147,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 with ui.row().classes('w-full gap-2'):
                     with ui.column().classes('flex-grow'):
                         self.ip_input = ui.input(
-                            label='IP Address',
-                            placeholder='192.168.x.x',
+                            label='IP Address (Optional)',
+                            placeholder='Leave empty for auto-discovery',
                             validation={'Invalid IP': lambda v: self._validate_ip(v)}
                         ).classes('w-full')
+                        ui.label('🔍 Auto-discovery will scan the network for drones').classes('text-xs text-gray-500 mt-1')
                     
                     with ui.column().style('width: 140px'):
                         with ui.row().classes('items-end gap-1'):
@@ -3018,7 +3163,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                             ui.button(icon='add', on_click=self._increment_drone_name).props('flat dense size=sm').tooltip('Next drone name')
                 
                 with ui.row().classes('w-full gap-2 mt-2'):
-                    ui.button('Connect', icon='link', on_click=self._connect_drone_ui).props('color=primary')
+                    ui.button('Auto-Discover', icon='radar', on_click=self._autodiscover_drone_ui).props('color=primary')
+                    ui.button('Connect', icon='link', on_click=self._connect_drone_ui).props('color=secondary')
                     ui.button('Refresh', icon='refresh', on_click=self._refresh_drone_list).props('flat')
             
             ui.separator()
@@ -3159,16 +3305,16 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     with ui.column().classes('w-full gap-0 justify-center').style('padding: 6px; flex: 1;'):
                         # Inputs row
                         with ui.row().classes('w-full gap-1'):
-                            self.lat_input = ui.input(label='Lat', value='0.0').props('dense outlined').style('flex: 1;')
-                            self.lon_input = ui.input(label='Lon', value='0.0').props('dense outlined').style('flex: 1;')
+                            self.lat_input = ui.input(label='Lat', value='0.0', on_change=self._on_monitoring_coords_change).props('dense outlined').style('flex: 1;')
+                            self.lon_input = ui.input(label='Lon', value='0.0', on_change=self._on_monitoring_coords_change).props('dense outlined').style('flex: 1;')
                             self.alt_input = ui.input(label='Alt', value='50').props('dense outlined').style('flex: 0.5;')
                             self.heading_input = ui.input(label='Hdg', value='0').props('dense outlined').style('flex: 0.4;')
                         # Mode + Speed row
                         with ui.row().classes('w-full items-center gap-1 mt-1'):
                             self.nav_mode_label = ui.label('PID').classes('text-xs font-bold').style('color: #1976d2; background: #e3f2fd; padding: 2px 6px; border-radius: 4px;')
                             self.nav_mode_switch = ui.switch('DJI', value=False, on_change=self._on_nav_mode_change).props('dense size=xs color=red')
-                            self.trajectory_speed_slider = ui.slider(min=1, max=12, value=5, step=1, on_change=self._on_trajectory_speed_change).props('color=red').classes('flex-1')
-                            self.trajectory_speed_label = ui.label('5 m/s').classes('text-xs font-bold').style('color: #e53935;')
+                            self.trajectory_speed_slider = ui.slider(min=1, max=15, value=15, step=1, on_change=self._on_trajectory_speed_change).props('color=red').classes('flex-1')
+                            self.trajectory_speed_label = ui.label('15 m/s').classes('text-xs font-bold').style('color: #e53935;')
                 
                 # Card 2: Vertical Separation (minimal)
                 with ui.card().classes('p-0').style('flex: 0.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;') as self.vertical_sep_card:
@@ -3229,6 +3375,22 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                             ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=sm').style('flex: 1;')
                             ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=sm').style('flex: 1;')
                             ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=sm').style('flex: 1;')
+
+                        # Row 4: Rotation view/control
+                        with ui.column().classes('w-full gap-1 mt-1'):
+                            with ui.row().classes('items-center gap-2'):
+                                ui.icon('sync_alt').style('font-size: 16px; color: #1565c0;')
+                                ui.label('Rotation').classes('text-sm font-bold').style('color: #1565c0;')
+                            with ui.row().classes('w-full items-center gap-2'):
+                                self.rotation_order_label = ui.label('Order: --').classes('text-xs').style('color: #1976d2;')
+                                self.rotation_next_label = ui.label('Next: --').classes('text-xs font-bold').style('color: #0d47a1;')
+                            with ui.row().classes('w-full items-center gap-2'):
+                                options = []
+                                if self.mission_controller and self.mission_controller.drone_order:
+                                    options = self.mission_controller.drone_order.copy()
+                                self.rotation_select = ui.select(options=options, value=(self.mission_controller.get_next_drone() if self.mission_controller else None), label='Set next').props('dense outlined').classes('flex-1')
+                                ui.button('Apply', icon='check', on_click=self._apply_next_drone_override).props('color=primary no-caps dense size=sm')
+                                ui.button('Reset', icon='restart_alt', on_click=self._reset_next_drone_override).props('flat no-caps dense size=sm')
                 
                 # Card 4: State Machine (compact)
                 with ui.card().classes('p-0').style('flex: 1.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
@@ -3542,6 +3704,47 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 self.drone_labels[namespace]['position'] = ui.label().classes('hidden')
                 
                 # ─────────────────────────────────────────────────────────────
+                # MANUAL STATE CHANGE - Debug/Override Control
+                # ─────────────────────────────────────────────────────────────
+                with ui.row().classes('w-full items-center gap-2').style('background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); padding: 8px 12px; border-radius: 8px;'):
+                    ui.icon('warning').style('font-size: 18px; color: #e65100;')
+                    ui.label('Manual State:').classes('text-xs font-semibold').style('color: #bf360c;')
+                    # State selector with all available states
+                    state_options = [state.name for state in MissionState]
+                    # Get current mission state from mission controller, fallback to IDLE
+                    current_mission_state = 'IDLE'
+                    if self.mission_controller:
+                        mission_status = self.mission_controller.get_mission_status(namespace)
+                        if mission_status:
+                            current_mission_state = mission_status.state.name
+                    state_select = ui.select(
+                        options=state_options,
+                        value=current_mission_state,
+                        label='Change to'
+                    ).props('dense outlined size=sm').classes('flex-1')
+                    self.drone_labels[namespace]['state_select'] = state_select
+                    
+                    # Apply button
+                    def apply_state_change(ns=namespace, select_elem=state_select):
+                        new_state_name = select_elem.value
+                        if not new_state_name:
+                            ui.notify('No state selected', type='warning')
+                            return
+                        try:
+                            new_state = MissionState[new_state_name]
+                            success, message = self.mission_controller.set_drone_mission_state(ns, new_state)
+                            if success:
+                                ui.notify(message, type='positive')
+                                self._emit_log(f"[{ns}] {message}")
+                            else:
+                                ui.notify(message, type='warning')
+                        except Exception as e:
+                            ui.notify(f'Error: {str(e)}', type='negative')
+                    
+                    ui.button('Apply', icon='check').props('flat dense size=sm color=orange').on_click(apply_state_change).tooltip('Change drone state')
+                    ui.button('Reset', icon='restart_alt').props('flat dense size=sm').on_click(lambda ns=namespace, sel=state_select: sel.set_value(self.drones[ns].state.name)).tooltip('Reset to current')
+                
+                # ─────────────────────────────────────────────────────────────
                 # VIDEO FEED - Compact inline display
                 # ─────────────────────────────────────────────────────────────
                 self.drone_video_visible[namespace] = False
@@ -3686,24 +3889,41 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         return True
     
     def _connect_drone_ui(self):
-        """Handle drone connection request from UI."""
+        """Handle drone connection request from UI with optional IP."""
         ip = self.ip_input.value.strip() if self.ip_input.value else ''
-        if not ip:
-            ui.notify('Please enter an IP address', type='warning')
-            return
-        if not self._validate_ip(ip):
+        
+        # Validate IP if provided
+        if ip and not self._validate_ip(ip):
             ui.notify('Please enter a valid IP address', type='warning')
             return
         
         namespace = self.namespace_input.value.strip() or None
         
+        # Show appropriate notification based on whether IP was provided
+        if ip:
+            ui.notify(f'Connecting to {ip}...', type='info')
+        else:
+            ui.notify('Auto-discovering drone on network...', type='info')
+        
         if self.connect_drone(ip, namespace):
-            ui.notify(f'Drone connected at {ip}', type='positive')
+            if ip:
+                ui.notify(f'Drone connected at {ip}', type='positive')
+            else:
+                ui.notify('Drone discovered and connected!', type='positive')
             self.ip_input.value = ''
             # Auto-suggest next drone name
             self.namespace_input.value = self._get_next_drone_name()
         else:
-            ui.notify('Failed to connect drone', type='negative')
+            if ip:
+                ui.notify('Failed to connect drone', type='negative')
+            else:
+                ui.notify('No drone found on network. Try entering IP manually.', type='negative')
+    
+    def _autodiscover_drone_ui(self):
+        """Auto-discover and connect drone without requiring IP."""
+        # Clear IP input to force autodiscovery
+        self.ip_input.value = ''
+        self._connect_drone_ui()
     
     def _disconnect_drone_ui(self, namespace: str):
         """Handle drone disconnection request from UI."""
@@ -3724,13 +3944,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify(f'No stored IP for {namespace}', type='warning')
             return
 
-        """
+        
         # Stop any ongoing WebRTC stream before reconnecting
         try:
             self._stop_webrtc_stream(namespace)
         except Exception:
             pass
-        """
+        
         ui.notify(f'Reconnecting {namespace}...', type='info')
 
         if not self.disconnect_drone(namespace):
@@ -4162,12 +4382,15 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Update the estimate of drones needed for continuous coverage."""
         if self.drones_needed_flying_label and self.monitoring_point.is_set:
             result = self.mission_controller.calculate_drones_needed()
-            simultaneous, total, travel_time, distance, has_actual_data = result
+            simultaneous, total, travel_time, distance, flight_time, has_actual_data = result
             
             # Format travel time
             travel_min = int(travel_time // 60)
             travel_sec = int(travel_time % 60)
             distance_km = distance / 1000
+            # Format flight time
+            flight_min = int(flight_time // 60)
+            flight_sec = int(flight_time % 60)
             
             connected = len(self.drones)
             
@@ -4201,7 +4424,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Normal display
                 self.drones_needed_flying_label.set_text(f"{source_prefix}{simultaneous}")
                 self.drones_needed_total_label.set_text(f"{total}")
-                self.drones_needed_info_label.set_text(f"{distance_km:.1f}km, {travel_min}min")
+                self.drones_needed_info_label.set_text(f"{distance_km:.1f}km, {travel_min}min, {flight_min}min flight")
                 
                 if connected >= total:
                     # All good - enough drones
@@ -4285,12 +4508,92 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         except ValueError:
             ui.notify('Invalid coordinates', type='warning')
     
+    def _on_monitoring_coords_change(self, e):
+        """Update waypoint marker live when typing lat/lon in the inputs.
+
+        This provides immediate visual feedback without committing the point
+        to mission state. It simply refreshes the marker and circle on the map
+        if both coordinates parse correctly.
+        """
+        try:
+            lat = float(self.lat_input.value)
+            lon = float(self.lon_input.value)
+        except (TypeError, ValueError):
+            # Ignore while typing incomplete/invalid values
+            return
+
+        if not self.map:
+            return
+
+        # Recreate marker and circle at the new coordinates
+        try:
+            if self.monitoring_marker:
+                self.map.remove_layer(self.monitoring_marker)
+            if self.monitoring_circle:
+                self.map.remove_layer(self.monitoring_circle)
+
+            self.monitoring_marker = self.map.marker(latlng=[lat, lon])
+            self.monitoring_circle = self.map.generic_layer(
+                name='circle',
+                args=[[lat, lon], {'radius': 50, 'color': 'green', 'fillOpacity': 0.2, 'weight': 2}]
+            )
+        except Exception:
+            # Be resilient to transient UI/map states
+            pass
+
     def _clear_monitoring_point_ui(self):
         """Clear the monitoring point from UI."""
         self.clear_monitoring_point()
         self.lat_input.value = '0.0'
         self.lon_input.value = '0.0'
         ui.notify('Monitoring point cleared', type='info')
+
+    def _apply_next_drone_override(self):
+        """Apply user-selected next drone override."""
+        if not self.mission_controller:
+            ui.notify('Mission controller not ready', type='warning')
+            return
+        selection = self.rotation_select.value if self.rotation_select else None
+        success, message = self.mission_controller.set_next_drone_override(selection)
+        if success:
+            ui.notify(message, type='positive')
+            self._emit_log(f"[ROTATION] {message}")
+        else:
+            ui.notify(message, type='warning')
+        # Refresh select and labels
+        self._refresh_rotation_ui()
+
+    def _reset_next_drone_override(self):
+        """Clear any override for next drone."""
+        if not self.mission_controller:
+            return
+        self.mission_controller.set_next_drone_override(None)
+        ui.notify('Next-drone override cleared', type='info')
+        self._emit_log("[ROTATION] Override cleared")
+        self._refresh_rotation_ui()
+
+    def _refresh_rotation_ui(self):
+        """Refresh rotation order text and select options."""
+        if not self.mission_controller:
+            return
+        try:
+            order = self.mission_controller.drone_order
+            if self.rotation_order_label:
+                if order:
+                    next_ns = self.mission_controller.get_next_drone()
+                    display = " → ".join([f"[{ns}]" if ns == next_ns else ns for ns in order])
+                    self.rotation_order_label.text = f"Order: {display}"
+                else:
+                    self.rotation_order_label.text = "Order: --"
+            if self.rotation_next_label:
+                next_ns = self.mission_controller.get_next_drone()
+                suffix = ' (overridden)' if self.mission_controller.get_next_drone_override() else ''
+                self.rotation_next_label.text = f"Next: {next_ns if next_ns else '--'}{suffix}"
+            if self.rotation_select is not None:
+                self.rotation_select.options = order if order else []
+                self.rotation_select.value = self.mission_controller.get_next_drone()
+        except Exception:
+            pass
     
     def _start_single_mission(self):
         """Start a single drone monitoring mission."""
@@ -4380,7 +4683,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Check if point is reachable (skip in Free Flight mode)
         if not is_free_flight:
             result = self.mission_controller.calculate_drones_needed()
-            simultaneous, total, travel_time, distance, has_actual_data = result
+            simultaneous, total, travel_time, distance, flight_time, has_actual_data = result
             connected = len(self.drones)
             
             if simultaneous == float('inf'):
@@ -4581,7 +4884,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         use_dji_native = e.value
         self.mission_controller.use_dji_native = use_dji_native
         
-        # Update label based on mode (slider range stays 1-12 for both)
+        # Update label based on mode (slider range stays 1-15 for both)
         if use_dji_native:
             # DJI Native mode
             if self.nav_mode_label:
@@ -4589,13 +4892,13 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 self.nav_mode_label.style('color: #e65100; min-width: 25px;')  # Orange for DJI
             # Set default speed for DJI Native
             if self.trajectory_speed_slider:
-                self.trajectory_speed_slider.set_value(10)
+                self.trajectory_speed_slider.set_value(15)
             if self.trajectory_speed_label:
-                self.trajectory_speed_label.text = '10 m/s'
-            self.DJI_NATIVE_SPEED = 10.0
-            self.mission_controller.dji_native_speed = 10.0  # Sync with mission controller
+                self.trajectory_speed_label.text = '15 m/s'
+            self.DJI_NATIVE_SPEED = 15.0
+            self.mission_controller.dji_native_speed = 15.0  # Sync with mission controller
             ui.notify('✈️ DJI Native (smoother trajectory)', type='positive')
-            self._emit_log("[CONFIG] Navigation: DJI NATIVE @ 10 m/s")
+            self._emit_log("[CONFIG] Navigation: DJI NATIVE @ 15 m/s")
         else:
             # PID mode
             if self.nav_mode_label:
@@ -4603,12 +4906,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 self.nav_mode_label.style('color: #1976d2; min-width: 25px;')  # Blue for PID
             # Set default speed for PID
             if self.trajectory_speed_slider:
-                self.trajectory_speed_slider.set_value(5)
+                self.trajectory_speed_slider.set_value(15)
             if self.trajectory_speed_label:
-                self.trajectory_speed_label.text = '5 m/s'
-            self.PID_SPEED = 5.0
+                self.trajectory_speed_label.text = '15 m/s'
+            self.PID_SPEED = 15.0
             ui.notify('✈️ PID Control (yaw during transit)', type='info')
-            self._emit_log("[CONFIG] Navigation: PID @ 5 m/s")
+            self._emit_log("[CONFIG] Navigation: PID @ 15 m/s")
     
     def _on_camera_sync_change(self, e):
         """Handle camera sync toggle change."""

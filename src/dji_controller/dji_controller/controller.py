@@ -148,6 +148,18 @@ class DjiNode(Node):
             Float64, 'battery_needed_to_go_home', 10)
         self.battery_needed_to_land_pub = self.create_publisher(
             Float64, 'battery_needed_to_land', 10)
+        
+        # Battery threshold publishers
+        self.remaining_charge_pub = self.create_publisher(
+            Float64, 'remaining_charge', 10)
+        self.serious_low_battery_threshold_pub = self.create_publisher(
+            Float64, 'serious_low_battery_threshold', 10)
+        self.low_battery_threshold_pub = self.create_publisher(
+            Float64, 'low_battery_threshold', 10)
+        
+        # Flight mode publisher
+        self.flight_mode_pub = self.create_publisher(
+            String, 'flight_mode', 10)
 
         # Camera Publisher
         self.camera_is_recording_pub = self.create_publisher(
@@ -204,6 +216,7 @@ class DjiNode(Node):
 
     def rth_callback(self, msg):
         self.get_logger().info("Received return to home command.")
+        # requestSendRTH now handles abort internally
         self.dji_interface.requestSendRTH()
 
     def abort_mission_callback(self, msg):
@@ -434,6 +447,18 @@ class DjiNode(Node):
                 Float64(data=float(telemetry.get('batteryNeededToGoHome', 0))))
             self.battery_needed_to_land_pub.publish(
                 Float64(data=float(telemetry.get('batteryNeededToLand', 0))))
+            
+            # Battery threshold information
+            self.remaining_charge_pub.publish(
+                Float64(data=float(telemetry.get('remainingCharge', 0))))
+            self.serious_low_battery_threshold_pub.publish(
+                Float64(data=float(telemetry.get('seriousLowBatteryThreshold', 0))))
+            self.low_battery_threshold_pub.publish(
+                Float64(data=float(telemetry.get('lowBatteryThreshold', 0))))
+            
+            # Flight mode
+            self.flight_mode_pub.publish(
+                String(data=str(telemetry.get('flightMode', 'UNKNOWN'))))
             
             # Camera recording status
             self.camera_is_recording_pub.publish(

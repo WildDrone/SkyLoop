@@ -772,12 +772,17 @@ def main():
         analyze_historical_data(show_plots=True)
         return
     
-    IP_RC = "10.184.11.117"  # Default IP
+    # Support both auto-discovery and manual IP specification
+    IP_RC = ""  # Empty string triggers auto-discovery
     
     if len(sys.argv) > 1:
         IP_RC = sys.argv[1]
     
-    print(f"Connecting to drone at {IP_RC}...")
+    if IP_RC:
+        print(f"Connecting to drone at {IP_RC}...")
+    else:
+        print("No IP provided, attempting auto-discovery...")
+    
     dji = DJIInterface(IP_RC)
     
     print("Starting telemetry stream...")

@@ -553,12 +553,12 @@ class MissionCalculator:
     
     # Speed constants
     VERTICAL_SPEED = 4.0      # m/s - DJI climb/descent rate
-    HORIZONTAL_SPEED_PID = 5.0      # m/s - PID control mode
-    HORIZONTAL_SPEED_NATIVE = 10.0  # m/s - DJI native trajectory mode
+    HORIZONTAL_SPEED_PID = 15.0     # m/s - PID control mode
+    HORIZONTAL_SPEED_NATIVE = 15.0  # m/s - DJI native trajectory mode
     
     @staticmethod
     def estimate_travel_time(distance: float, altitude: float = 50.0,
-                             horizontal_speed: float = 5.0, vertical_speed: float = 4.0) -> float:
+                             horizontal_speed: float = 15.0, vertical_speed: float = 4.0) -> float:
         """
         Estimate travel time in seconds, including climb time.
         
@@ -566,7 +566,7 @@ class MissionCalculator:
             distance: Horizontal distance in meters
             altitude: Target altitude in meters (default 50m)
             horizontal_speed: Horizontal flight speed in m/s 
-                              (5 m/s for PID mode, 10 m/s for DJI native)
+                              (15 m/s for PID mode, 15 m/s for DJI native)
             vertical_speed: Vertical climb speed in m/s (default 4 m/s)
         
         Returns:
@@ -826,7 +826,7 @@ class PerpetualMonitorNode(Node):
         Dynamically connect a new drone to the system.
         
         Args:
-            ip_address: IP address of the drone's RC controller
+            ip_address: IP address of the drone's RC controller (empty string triggers auto-discovery)
             namespace: ROS namespace for the drone (auto-generated if not provided)
         
         Returns:
@@ -841,7 +841,10 @@ class PerpetualMonitorNode(Node):
             self.get_logger().warning(f"Drone {namespace} already connected")
             return False
         
-        self.get_logger().info(f"Connecting drone {namespace} at {ip_address}")
+        if ip_address:
+            self.get_logger().info(f"Connecting drone {namespace} at {ip_address}")
+        else:
+            self.get_logger().info(f"Connecting drone {namespace} with auto-discovery")
         
         # Launch dji_controller node for this drone as a subprocess
         try:
@@ -1294,7 +1297,7 @@ class PerpetualMonitorNode(Node):
             self.get_logger().info(f"Abort mission command sent to {namespace}")
     
     # PID control speed (m/s) - can be set from UI
-    PID_SPEED = 5.0
+    PID_SPEED = 15.0
     
     def send_goto_waypoint(self, namespace: str, lat: float, lon: float, alt: float, yaw: float = 0.0, speed: float = None):
         """Command a drone to go to a waypoint using PID control.
@@ -1305,7 +1308,7 @@ class PerpetualMonitorNode(Node):
             lon: Target longitude
             alt: Target altitude
             yaw: Target yaw angle
-            speed: Max speed in m/s (default: PID_SPEED = 5.0)
+            speed: Max speed in m/s (default: PID_SPEED = 15.0)
         """
         if speed is None:
             speed = self.PID_SPEED
@@ -1318,7 +1321,7 @@ class PerpetualMonitorNode(Node):
             self.get_logger().info(f"Goto waypoint [PID @ {speed}m/s] sent to {namespace}: ({lat}, {lon}, {alt})")
     
     # DJI Native trajectory speed (m/s)
-    DJI_NATIVE_SPEED = 10.0
+    DJI_NATIVE_SPEED = 15.0
     
     def send_goto_waypoint_dji_native(self, namespace: str, lat: float, lon: float, alt: float, speed: float = None):
         """Command a drone to go to a waypoint using DJI Native mode.
@@ -1331,7 +1334,7 @@ class PerpetualMonitorNode(Node):
             lat: Target latitude
             lon: Target longitude  
             alt: Target altitude
-            speed: Flight speed in m/s (default: DJI_NATIVE_SPEED = 10.0)
+            speed: Flight speed in m/s (default: DJI_NATIVE_SPEED = 15.0)
         """
         if speed is None:
             speed = self.DJI_NATIVE_SPEED

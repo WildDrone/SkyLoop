@@ -155,7 +155,7 @@ class RelayMissionConfig:
     mission_mode: MissionMode = MissionMode.MONITORING_POINT
     
     base_rth_altitude: float = 50.0
-    altitude_separation: float = 15.0
+    altitude_separation: float = 20.0
     video_trigger_distance: float = 50.0
     
     # Safety parameters
@@ -202,7 +202,7 @@ class MissionController:
         # PID: 5 m/s, includes yaw control during transit
         # DJI Native: 10 m/s, smoother trajectory, yaw set after arrival
         self.use_dji_native = False  # False = PID (default), True = DJI Native
-        self.dji_native_speed = 10.0  # Speed for DJI Native mode (m/s)
+        self.dji_native_speed = 15.0  # Speed for DJI Native mode (m/s)
         
         # Command and event logging
         self._command_log: List[str] = []  # Log of all commands sent
@@ -220,6 +220,9 @@ class MissionController:
         self.drone_missions: Dict[str, DroneMissionStatus] = {}
         self.drone_order: List[str] = []  # Order for relay
         self.current_drone_index: int = 0
+
+        # Optional override for selecting the next drone to launch
+        self._override_next_drone: Optional[str] = None
         
         # Relay launch tracking - prevents missed launches if countdown fluctuates
         self._relay_launch_pending: bool = False
@@ -692,8 +695,8 @@ class MissionController:
     
     # Speed constants
     VERTICAL_SPEED = 4.0      # m/s - DJI climb/descent rate
-    HORIZONTAL_SPEED_PID = 5.0      # m/s - PID control mode
-    HORIZONTAL_SPEED_NATIVE = 10.0  # m/s - DJI native trajectory mode
+    HORIZONTAL_SPEED_PID = 15.0     # m/s - PID control mode
+    HORIZONTAL_SPEED_NATIVE = 15.0  # m/s - DJI native trajectory mode
     
     def estimate_travel_time(self, distance: float, altitude: float = None, 
                              horizontal_speed: float = None, vertical_speed: float = None) -> float:
@@ -710,7 +713,7 @@ class MissionController:
             distance: Horizontal distance in meters
             altitude: Target altitude in meters (uses config monitoring_alt if None)
             horizontal_speed: Horizontal flight speed in m/s 
-                              (default: 5 m/s for PID mode, 10 m/s for DJI native)
+                              (default: 15 m/s for PID mode, 15 m/s for DJI native)
             vertical_speed: Vertical climb speed in m/s (default 4 m/s)
         
         Returns:
@@ -2074,9 +2077,14 @@ class MissionController:
         
         remaining = self.get_remaining_flight_time(current_ns)
         
-        # Determine next drone (needed for countdown display even during collecting phase)
-        next_index = (self.current_drone_index + 1) % len(self.drone_order)
-        next_ns = self.drone_order[next_index]
+        # Determine next drone (consider user override if present)
+        override_ns = self._override_next_drone if self._override_next_drone in self.drone_order else None
+        if override_ns:
+            next_ns = override_ns
+            next_index = self.drone_order.index(override_ns)
+        else:
+            next_index = (self.current_drone_index + 1) % len(self.drone_order)
+            next_ns = self.drone_order[next_index]
         
         # Check if RTH predictor is still collecting data (-1 signal)
         if remaining == -1:
@@ -2190,6 +2198,9 @@ class MissionController:
                 self._relay_launch_pending = False  # Reset after successful launch
                 self._takeoff_confirmation_pending = False
                 self._takeoff_confirmed = False
+                # Clear override once the selected next drone has launched
+                if self._override_next_drone == self._pending_next_drone:
+                    self._override_next_drone = None
                 # NOTE: Don't reset _takeoff_confirmation_shown_for_drone here
                 # It will be reset when current_drone_index changes (new relay cycle)
     
@@ -2539,12 +2550,47 @@ class MissionController:
     
     def get_next_drone(self) -> Optional[str]:
         """Get the next drone in relay sequence."""
+        # If user has set an override and it is still valid, honor it
+        if self._override_next_drone and self._override_next_drone in self.drone_order:
+            return self._override_next_drone
         if not self.drone_order:
             return None
         next_index = (self.current_drone_index + 1) % len(self.drone_order)
         if next_index < len(self.drone_order):
             return self.drone_order[next_index]
         return None
+
+    def set_next_drone_override(self, namespace: Optional[str]) -> tuple[bool, str]:
+        """Set or clear the user override for the next drone to launch.
+
+        Args:
+            namespace: drone namespace to set as next; if None or empty, clears override.
+
+        Returns:
+            (success, message)
+        """
+        # Clear override
+        if not namespace:
+            self._override_next_drone = None
+            return True, "Next-drone override cleared; using automatic rotation"
+
+        if namespace not in self.drone_order:
+            return False, f"Drone {namespace} not in rotation"
+
+        mission = self.drone_missions.get(namespace)
+        if not mission:
+            return False, f"Drone {namespace} not found"
+
+        # Allow selecting IDLE or COMPLETED (ready) drones only
+        if mission.state not in [MissionState.IDLE, MissionState.COMPLETED]:
+            return False, f"Drone {namespace} not ready (state: {mission.state.name})"
+
+        self._override_next_drone = namespace
+        return True, f"Next-drone set to {namespace}"
+
+    def get_next_drone_override(self) -> Optional[str]:
+        """Return override value or None if not set."""
+        return self._override_next_drone
     
     def get_drones_needing_reconnection(self) -> List[str]:
         """
@@ -2569,7 +2615,157 @@ class MissionController:
                any(m.state not in [MissionState.IDLE, MissionState.COMPLETED, MissionState.ABORTED, MissionState.ERROR] 
                    for m in self.drone_missions.values())
     
-    def calculate_drones_needed(self, mission_duration_hours: float = 1.0, battery_swap_time: float = 180.0) -> Tuple[int, int, float, float, bool]:
+    def set_drone_mission_state(self, namespace: str, new_state: MissionState) -> tuple[bool, str]:
+        """
+        Manually set a drone's mission state and trigger appropriate side effects and commands.
+
+        Side effects include:
+        - Stop recording if transitioning OUT of recording states
+        - Send abort/land commands if transitioning OUT of flight states
+        - Reset mission data if transitioning to IDLE or COMPLETED
+        - Send initial commands to kick off the new state (e.g., set RTH altitude, takeoff, goto waypoint)
+
+        Args:
+            namespace: Drone namespace
+            new_state: Target MissionState enum value
+
+        Returns:
+            (success, message)
+        """
+        mission = self.drone_missions.get(namespace)
+        if not mission:
+            return False, f"Drone {namespace} not found"
+
+        old_state = mission.state
+        if old_state == new_state:
+            return True, f"Drone already in {new_state.name} state"
+
+        # Stop recording if we're leaving a state that records
+        if mission.video_started and old_state in [
+            MissionState.APPROACHING_POINT,
+            MissionState.MONITORING,
+            MissionState.WAITING_FOR_RELAY,
+            MissionState.CAMERA_SYNC,
+        ]:
+            if self.cmd_stop_recording:
+                self.cmd_stop_recording(namespace)
+            mission.video_started = False
+            self._emit_event(namespace, "Recording stopped (manual state change)")
+
+        # Send abort command if leaving an active flight state
+        if old_state in [
+            MissionState.TAKING_OFF,
+            MissionState.CLIMBING_TO_ALTITUDE,
+            MissionState.TRANSIT_TO_MONITORING,
+            MissionState.APPROACHING_POINT,
+            MissionState.MONITORING,
+            MissionState.WAITING_FOR_RELAY,
+            MissionState.RETURNING_HOME,
+            MissionState.CAMERA_SYNC,
+        ]:
+            if self.cmd_abort:
+                self.cmd_abort(namespace)
+            self._emit_event(namespace, "Abort command sent (manual state change)")
+
+        # Reset mission data if transitioning to IDLE or COMPLETED
+        if new_state in [MissionState.IDLE, MissionState.COMPLETED]:
+            mission.mission_start_time = 0.0
+            mission.transit_start_time = 0.0
+            mission.monitoring_start_time = 0.0
+            mission.rth_start_time = 0.0
+            mission.estimated_travel_time = 0.0
+            mission.actual_travel_time = 0.0
+            mission.actual_rth_time = 0.0
+            mission.video_started = False
+            mission.state_entry_time = 0.0
+            mission.rth_altitude_cmd_count = 0
+            mission.takeoff_cmd_sent = False
+            mission.takeoff_second_cmd_sent = False
+            self._emit_event(namespace, f"Mission reset (transitioning to {new_state.name})")
+
+        # Update state
+        mission.state = new_state
+        mission.state_entry_time = 0.0  # Reset state entry time so next update initializes properly
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Send initial commands for the new state to kick off the phase
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if new_state == MissionState.SETTING_RTH_ALTITUDE:
+            if self.cmd_set_rth_altitude:
+                self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+                self._emit_event(namespace, f"Commanded: Set RTH altitude to {mission.assigned_altitude}m")
+
+        elif new_state == MissionState.TAKING_OFF:
+            if self.cmd_takeoff:
+                self.cmd_takeoff(namespace)
+                mission.takeoff_cmd_sent = True
+                self._emit_event(namespace, "Commanded: Takeoff")
+
+        elif new_state == MissionState.CLIMBING_TO_ALTITUDE:
+            if self.cmd_goto_altitude:
+                self.cmd_goto_altitude(namespace, mission.assigned_altitude)
+                mission.climb_start_time = time.time()
+                self._emit_event(namespace, f"Commanded: Climb to {mission.assigned_altitude}m")
+
+        elif new_state == MissionState.TRANSIT_TO_MONITORING:
+            # Ensure target coordinates are set from config if not already set
+            if mission.target_lat == 0.0 or mission.target_lon == 0.0:
+                mission.target_lat = self.config.monitoring_lat
+                mission.target_lon = self.config.monitoring_lon
+            if mission.target_alt == 0.0:
+                mission.target_alt = self.config.monitoring_alt
+            if mission.target_heading == 0.0:
+                mission.target_heading = self.config.monitoring_heading
+            
+            if self.cmd_goto_waypoint:
+                self.cmd_goto_waypoint(
+                    namespace,
+                    mission.target_lat,
+                    mission.target_lon,
+                    mission.target_alt,
+                    mission.target_heading
+                )
+                mission.transit_start_time = time.time()
+                self._emit_event(namespace, f"Commanded: Transit to monitoring point ({mission.target_lat:.6f}, {mission.target_lon:.6f})")
+
+        elif new_state == MissionState.APPROACHING_POINT:
+            # Approaching is a monitoring state, start recording if not already
+            if not mission.video_started and self.cmd_start_recording:
+                self.cmd_start_recording(namespace)
+                mission.video_started = True
+                self._emit_event(namespace, "Commanded: Start recording (approaching point)")
+
+        elif new_state == MissionState.MONITORING:
+            # Ensure at target heading
+            if self.use_dji_native and self.cmd_goto_yaw:
+                self.cmd_goto_yaw(namespace, mission.target_heading)
+                self._emit_event(namespace, f"Commanded: Set heading to {mission.target_heading:.0f}°")
+            # Start recording if not already
+            if not mission.video_started and self.cmd_start_recording:
+                self.cmd_start_recording(namespace)
+                mission.video_started = True
+                self._emit_event(namespace, "Commanded: Start recording (monitoring)")
+            mission.monitoring_start_time = time.time()
+
+        elif new_state == MissionState.RETURNING_HOME:
+            if self.cmd_rth:
+                self.cmd_rth(namespace)
+                mission.rth_start_time = time.time()
+                self._emit_event(namespace, "Commanded: Return to home")
+
+        elif new_state == MissionState.ABORTED:
+            if self.cmd_abort:
+                self.cmd_abort(namespace)
+                self._emit_event(namespace, "Commanded: Abort mission")
+
+        self._update_status(namespace, new_state, f"Manually changed to {new_state.name}")
+
+        # Log the change prominently
+        self._emit_event(namespace, f"⚠️ MANUAL STATE CHANGE: {old_state.name} → {new_state.name}")
+
+        return True, f"State changed: {old_state.name} → {new_state.name}"
+    
+    def calculate_drones_needed(self, mission_duration_hours: float = 1.0, battery_swap_time: float = 180.0) -> Tuple[int, int, float, float, float, bool]:
         """
         Calculate minimum drones needed for continuous coverage.
         
@@ -2581,9 +2777,12 @@ class MissionController:
             battery_swap_time: Time in seconds to swap battery and reconnect (default 3 min)
         
         Returns:
-            Tuple of (drones_simultaneous, drones_total, travel_time_seconds, distance_meters, is_from_actual_data)
+            Tuple of (drones_simultaneous, drones_total, travel_time_seconds, distance_meters, flight_time_seconds, is_from_actual_data)
             - drones_simultaneous: min drones flying at the same time for continuous coverage
             - drones_total: total drones needed in rotation (including those on ground swapping batteries)
+            - travel_time_seconds: estimated/measured travel time used in calculation
+            - distance_meters: distance from home to monitoring point
+            - flight_time_seconds: total flight time value used in calculation
             - drones values are float('inf') if point is too far
             - is_from_actual_data is True if calculation used actual flight data
         """
@@ -2606,9 +2805,9 @@ class MissionController:
                     if max_flight_time > 0:
                         avg_flight_time = max_flight_time
             
-            # Final fallback: assume 25 minutes
+            # Final fallback: assume 30 minutes
             if avg_flight_time == 0:
-                avg_flight_time = 1500  # 25 minutes
+                avg_flight_time = 1800  # 30 minutes
         
         # Get list of drones to check - use drone_order if mission active, else get connected drones
         drones_to_check = self.drone_order if self.drone_order else []
@@ -2651,7 +2850,7 @@ class MissionController:
         effective_monitoring = avg_flight_time - (2 * avg_travel) - self.config.safety_buffer_seconds
         
         if effective_monitoring <= 0:
-            return (float('inf'), float('inf'), avg_travel, distance, has_actual_data)  # Impossible - point too far
+            return (float('inf'), float('inf'), avg_travel, distance, avg_flight_time, has_actual_data)  # Impossible - point too far
         
         # Calculate drones flying simultaneously:
         # Need to launch next drone when: remaining_time <= travel_time + safety_buffer
@@ -2665,7 +2864,7 @@ class MissionController:
         # Total drones in rotation (including those swapping batteries)
         drones_total = max(drones_simultaneous, math.ceil(cycle_time / effective_monitoring))
         
-        return (drones_simultaneous, drones_total, avg_travel, distance, has_actual_data)
+        return (drones_simultaneous, drones_total, avg_travel, distance, avg_flight_time, has_actual_data)
     
     def shutdown(self):
         """Shutdown the mission controller."""
