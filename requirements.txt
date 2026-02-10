@@ -27,6 +27,9 @@ pydantic==2.12.5
 python-dotenv==1.2.1
 orjson==3.11.4
 
+# NumPy - pinned to 1.x for compatibility with system matplotlib
+numpy<2
+
 # Computer Vision / Object Detection
 ultralytics==8.3.241
 opencv-python==4.10.0.84

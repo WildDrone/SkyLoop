@@ -2030,14 +2030,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Override connect_drone to emit event on success."""
         result = super().connect_drone(ip_address, namespace)
         if result:
-            # Find the namespace that was used
-            ns = namespace if namespace else f"drone_{len(self.drones)}"
+            # result is the actual namespace string used (may differ from input if auto-discovered)
+            ns = result
             if ns in self.drones:
                 self.drone_connected_event.emit({
                     'namespace': ns,
                     'drone': self.drones[ns]
                 })
-                self._emit_log(f"[CONNECTED] {ns} at {ip_address}")
+                self._emit_log(f"[CONNECTED] {ns} at {ip_address or self.drones[ns].ip_address}")
                 
                 # Check if drone was auto-added to relay
                 if self.mission_controller.is_drone_in_mission(ns):
@@ -2398,9 +2398,19 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 is_manual = mode.lower() != 'virtual_stick' and mode.lower() != 'unknown'
                 if is_manual:
                     self.drone_labels[ns]['manual_indicator'].style('display: inline-flex')
-                    self._emit_log(f"[{ns}] Manual control detected: {mode}")
+                    # Only log once when transitioning to manual mode
+                    prev_mode = getattr(self, '_last_flight_mode', {}).get(ns)
+                    if prev_mode != mode:
+                        if not hasattr(self, '_last_flight_mode'):
+                            self._last_flight_mode = {}
+                        self._last_flight_mode[ns] = mode
+                        self._emit_log(f"[{ns}] Manual control detected: {mode}")
                 else:
                     self.drone_labels[ns]['manual_indicator'].style('display: none')
+                    # Track mode change so we log again if it returns to manual
+                    if not hasattr(self, '_last_flight_mode'):
+                        self._last_flight_mode = {}
+                    self._last_flight_mode[ns] = mode
         
         @self.rth_predictor_update.subscribe
         def on_rth_predictor(data: dict):
@@ -3905,11 +3915,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         else:
             ui.notify('Auto-discovering drone on network...', type='info')
         
-        if self.connect_drone(ip, namespace):
-            if ip:
-                ui.notify(f'Drone connected at {ip}', type='positive')
-            else:
-                ui.notify('Drone discovered and connected!', type='positive')
+        result_ns = self.connect_drone(ip, namespace)
+        if result_ns:
+            ui.notify(f'Drone "{result_ns}" connected!', type='positive')
             self.ip_input.value = ''
             # Auto-suggest next drone name
             self.namespace_input.value = self._get_next_drone_name()
@@ -3920,9 +3928,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 ui.notify('No drone found on network. Try entering IP manually.', type='negative')
     
     def _autodiscover_drone_ui(self):
-        """Auto-discover and connect drone without requiring IP."""
+        """Auto-discover and connect drone without requiring IP.
+        Clears both IP and namespace so the discovered drone name is used as namespace."""
         # Clear IP input to force autodiscovery
         self.ip_input.value = ''
+        # Clear namespace so discovered drone name is used
+        self.namespace_input.value = ''
         self._connect_drone_ui()
     
     def _disconnect_drone_ui(self, namespace: str):
@@ -3957,10 +3968,21 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             ui.notify(f'Failed to disconnect {namespace}', type='negative')
             return
 
+        # connect_drone triggers _refresh_drone_list via the drone_connected_event,
+        # which destroys all drone cards (including the button that invoked us).
+        # Queue the notification so it fires after the UI context is restored.
         if self.connect_drone(ip, namespace):
-            ui.notify(f'{namespace} reconnected', type='positive')
+            self._notification_queue.append({
+                'message': f'{namespace} reconnected',
+                'type': 'positive',
+                'timeout': 3000
+            })
         else:
-            ui.notify(f'Reconnect failed for {namespace}', type='negative')
+            self._notification_queue.append({
+                'message': f'Reconnect failed for {namespace}',
+                'type': 'negative',
+                'timeout': 5000
+            })
     
     def _start_webrtc_stream(self, namespace: str):
         """Start WebRTC video stream for a drone using native HTML5 video element."""
@@ -5812,6 +5834,7 @@ ui_run.APP_IMPORT_STRING = f'{__name__}:app'
 
 ui.run(
     uvicorn_reload_dirs=str(Path(__file__).parent.resolve()),
+    reload=False,
     favicon='https://fonts.gstatic.com/s/i/short-term/release/materialsymbolsoutlined/flight/default/48px.svg',
     port=8086,
     title='Perpetual Drone Monitoring'

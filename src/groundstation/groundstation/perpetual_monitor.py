@@ -27,6 +27,7 @@ from sensor_msgs.msg import NavSatFix
 from nicegui import ui, app, ui_run
 
 from groundstation.mission_controller import MissionController, MissionState, MissionMode
+from dji_controller.submodules.dji_interface import discover_drone
 
 
 # ============================================================================
@@ -827,24 +828,45 @@ class PerpetualMonitorNode(Node):
         
         Args:
             ip_address: IP address of the drone's RC controller (empty string triggers auto-discovery)
-            namespace: ROS namespace for the drone (auto-generated if not provided)
+            namespace: ROS namespace for the drone (auto-generated if not provided).
+                       When auto-discovering (no IP), the discovered drone name is used if available.
         
         Returns:
-            True if connection successful, False otherwise
+            The namespace string if connection successful (truthy), None otherwise (falsy)
         """
+        # If no IP provided, run discovery from groundstation to get both IP and drone name
+        discovered_name = None
+        if not ip_address:
+            self.get_logger().info("No IP provided, running network discovery...")
+            disc_ip, disc_name = discover_drone(timeout=5.0)
+            if disc_ip:
+                ip_address = disc_ip
+                discovered_name = disc_name
+                self.get_logger().info(
+                    f"Discovered drone at {disc_ip}" +
+                    (f" (name: {disc_name})" if disc_name else ""))
+            else:
+                self.get_logger().error("No drone found on network during discovery")
+                return None
+        
+        # Determine namespace: prefer user-provided, then discovered name, then auto-generate
         if namespace is None:
-            namespace = f"drone_{len(self.drones) + 1}"
+            if discovered_name:
+                # Sanitize drone name for ROS namespace (lowercase, replace spaces/special chars)
+                namespace = discovered_name.lower().replace(' ', '_').replace('-', '_')
+                # Remove any characters not valid in ROS names
+                namespace = ''.join(c for c in namespace if c.isalnum() or c == '_')
+                self.get_logger().info(f"Using discovered drone name as namespace: {namespace}")
+            else:
+                namespace = f"drone_{len(self.drones) + 1}"
         
         # Allow reconnection of a previously disconnected drone while preserving its color/identity
         existing_drone = self.drones.get(namespace)
         if existing_drone and existing_drone.is_connected:
             self.get_logger().warning(f"Drone {namespace} already connected")
-            return False
+            return None
         
-        if ip_address:
-            self.get_logger().info(f"Connecting drone {namespace} at {ip_address}")
-        else:
-            self.get_logger().info(f"Connecting drone {namespace} with auto-discovery")
+        self.get_logger().info(f"Connecting drone {namespace} at {ip_address}")
         
         # Launch dji_controller node for this drone as a subprocess
         try:
@@ -853,8 +875,9 @@ class PerpetualMonitorNode(Node):
                 'ros2', 'run', 'dji_controller', 'dji_node',
                 '--ros-args',
                 '-r', f'__ns:=/{namespace}',
-                '-p', f'ip_rc:={ip_address}'
             ]
+            if ip_address:
+                cmd.extend(['-p', f'ip_rc:={ip_address}'])
             
             self.get_logger().info(f"Launching controller node: {' '.join(cmd)}")
             
@@ -877,11 +900,11 @@ class PerpetualMonitorNode(Node):
                 # Process already terminated - connection failed
                 stdout, stderr = process.communicate()
                 self.get_logger().error(f"Controller node failed to start: {stderr.decode()}")
-                return False
+                return None
                 
         except Exception as e:
             self.get_logger().error(f"Failed to launch controller node: {e}")
-            return False
+            return None
         
         # Preserve prior color if this namespace existed; otherwise assign next palette color
         drone_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
@@ -923,7 +946,7 @@ class PerpetualMonitorNode(Node):
             self.ui_handler.on_drone_connected(namespace, drone)
         
         self.get_logger().info(f"Drone {namespace} connected successfully")
-        return True
+        return namespace
     
     def disconnect_drone(self, namespace: str) -> bool:
         """

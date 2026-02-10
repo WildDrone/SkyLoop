@@ -38,6 +38,9 @@ echo ""
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
 echo ""
 
+# Increase inotify watch limit for file watchers (NiceGUI/uvicorn)
+sudo sysctl -w fs.inotify.max_user_watches=524288 > /dev/null 2>&1 || true
+
 # Source ROS2 environment
 source /opt/ros/humble/setup.bash
 if [ -f /WildPerpetua/install/setup.bash ]; then

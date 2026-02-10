@@ -29,7 +29,13 @@ DISCOVERY_RESPONSE_PREFIX = "WILDBRIDGE_HERE:"
 def discover_drone(timeout=5.0):
     """
     Discover WildBridge drone on the network using UDP broadcast.
-    Returns the IP address of the first drone found, or None if not found.
+    Returns a tuple (ip, name) of the first drone found.
+    Name may be None if the WildBridge app does not include it.
+    Returns (None, None) if no drone is found.
+    
+    Expected response formats:
+        WILDBRIDGE_HERE:<ip>:<name>   (preferred, includes drone name)
+        WILDBRIDGE_HERE:<ip>          (legacy, name will be None)
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -46,9 +52,12 @@ def discover_drone(timeout=5.0):
                 data, addr = sock.recvfrom(1024)
                 message = data.decode('utf-8')
                 if message.startswith(DISCOVERY_RESPONSE_PREFIX):
-                    drone_ip = message.split(":")[1]
-                    print(f"Found WildBridge drone at {drone_ip}")
-                    return drone_ip
+                    parts = message.split(":", 2)  # Split into at most 3 parts
+                    drone_ip = parts[1] if len(parts) > 1 else None
+                    drone_name = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+                    print(f"Found WildBridge drone at {drone_ip}" +
+                          (f" (name: {drone_name})" if drone_name else ""))
+                    return (drone_ip, drone_name)
             except socket.timeout:
                 break
     except Exception as e:
@@ -56,7 +65,46 @@ def discover_drone(timeout=5.0):
     finally:
         sock.close()
     
-    return None
+    return (None, None)
+
+
+def discover_all_drones(timeout=5.0):
+    """
+    Discover all WildBridge drones on the network using UDP broadcast.
+    Returns a list of (ip, name) tuples for all drones found.
+    """
+    results = []
+    seen_ips = set()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.settimeout(timeout)
+    
+    try:
+        sock.sendto(DISCOVERY_MSG, ('<broadcast>', DISCOVERY_PORT))
+        print(f"Broadcasting discovery message on port {DISCOVERY_PORT}...")
+        
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                data, addr = sock.recvfrom(1024)
+                message = data.decode('utf-8')
+                if message.startswith(DISCOVERY_RESPONSE_PREFIX):
+                    parts = message.split(":", 2)
+                    drone_ip = parts[1] if len(parts) > 1 else None
+                    drone_name = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+                    if drone_ip and drone_ip not in seen_ips:
+                        seen_ips.add(drone_ip)
+                        results.append((drone_ip, drone_name))
+                        print(f"Found WildBridge drone at {drone_ip}" +
+                              (f" (name: {drone_name})" if drone_name else ""))
+            except socket.timeout:
+                break
+    except Exception as e:
+        print(f"Discovery error: {e}")
+    finally:
+        sock.close()
+    
+    return results
 
 # HTTP POST Command Endpoints (port 8080)
 EP_STICK = "/send/stick"  # expects a formatted string: "<leftX>,<leftY>,<rightX>,<rightY>"
@@ -90,11 +138,13 @@ class DJIInterface:
     """
     
     def __init__(self, IP_RC=""):
+        self.drone_name = None
         if not IP_RC:
             print("No IP provided, attempting to discover drone...")
-            discovered_ip = discover_drone()
+            discovered_ip, discovered_name = discover_drone()
             if discovered_ip:
                 self.IP_RC = discovered_ip
+                self.drone_name = discovered_name
             else:
                 print("Drone discovery failed.")
                 self.IP_RC = ""
