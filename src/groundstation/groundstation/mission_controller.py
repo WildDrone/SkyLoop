@@ -155,7 +155,7 @@ class RelayMissionConfig:
     mission_mode: MissionMode = MissionMode.MONITORING_POINT
     
     base_rth_altitude: float = 50.0
-    altitude_separation: float = 20.0
+    altitude_separation: float = 15.0
     video_trigger_distance: float = 50.0
     
     # Safety parameters

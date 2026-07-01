@@ -130,6 +130,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     def __init__(self):
         super().__init__()
         
+        # Default drone IPs to auto-connect at startup
+        self.AUTO_CONNECT_DRONE_IPS = [
+            ('10.142.188.57', 'drone_1'),
+            ('10.142.188.117', 'drone_2'),
+        ]
+        
         # NiceGUI Events for thread-safe UI updates
         self.drone_position_update = Event()
         self.drone_heading_update = Event()
@@ -334,6 +340,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Register drone altitude callback for separation check  
         self.mission_controller.get_drone_altitude = self._get_drone_altitude
+        
+        # Auto-connect drones at startup (in background thread)
+        self._auto_connect_on_startup()
         
         # Define the main page
         @ui.page('/')
@@ -2026,6 +2035,30 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.get_logger().warning(f"_get_drone_altitude({namespace}): drone not found!")
         return 0.0
     
+    def _auto_connect_on_startup(self):
+        """Auto-connect to predefined drone IPs at startup."""
+        import threading
+        
+        def connect_drones():
+            # Wait a bit for ROS2 to fully initialize
+            time.sleep(2.0)
+            
+            for ip, namespace in self.AUTO_CONNECT_DRONE_IPS:
+                self.get_logger().info(f"[AUTO-CONNECT] Connecting to {namespace} at {ip}...")
+                try:
+                    result = self.connect_drone(ip, namespace)
+                    if result:
+                        self.get_logger().info(f"[AUTO-CONNECT] Successfully connected {namespace}")
+                    else:
+                        self.get_logger().warning(f"[AUTO-CONNECT] Failed to connect {namespace} at {ip}")
+                except Exception as e:
+                    self.get_logger().error(f"[AUTO-CONNECT] Error connecting {namespace}: {e}")
+                # Small delay between connections
+                time.sleep(1.0)
+        
+        # Run in background thread to not block GUI startup
+        threading.Thread(target=connect_drones, daemon=True).start()
+    
     def connect_drone(self, ip_address: str, namespace: str = None) -> bool:
         """Override connect_drone to emit event on success."""
         result = super().connect_drone(ip_address, namespace)
@@ -3159,6 +3192,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self.ip_input = ui.input(
                             label='IP Address (Optional)',
                             placeholder='Leave empty for auto-discovery',
+                            value='10.142.188.57',
                             validation={'Invalid IP': lambda v: self._validate_ip(v)}
                         ).classes('w-full')
                         ui.label('🔍 Auto-discovery will scan the network for drones').classes('text-xs text-gray-500 mt-1')
