@@ -901,568 +901,564 @@ class MissionController:
             except Exception as e:
                 logger.error(f"Mission loop error: {e}")
     
+    # State machine handlers. _update_drone_mission dispatches to one per state;
+    # states not listed (IDLE, MONITORING, WAITING_FOR_RELAY, RETURNING_HOME,
+    # COMPLETED) take no action here (relay/landing logic lives elsewhere).
     def _update_drone_mission(self, namespace: str, mission: DroneMissionStatus):
-        """Update a single drone's mission state."""
-        
-        if mission.state == MissionState.IDLE:
-            return
-        
-        elif mission.state == MissionState.SETTING_RTH_ALTITUDE:
-            # Set RTH altitude before takeoff - CRITICAL for safe returns
-            # Non-blocking: send commands at 0.5s intervals, then wait 1s before transition
-            
-            now = time.time()
-            
-            # Initialize state entry time on first call
-            if mission.state_entry_time == 0.0:
+        """Update a single drone's mission state by dispatching to a per-state handler."""
+        state = mission.state
+        if state == MissionState.SETTING_RTH_ALTITUDE:
+            self._handle_setting_rth_altitude(namespace, mission)
+        elif state == MissionState.TAKING_OFF:
+            self._handle_taking_off(namespace, mission)
+        elif state == MissionState.CLIMBING_TO_ALTITUDE:
+            self._handle_climbing_to_altitude(namespace, mission)
+        elif state == MissionState.TRANSIT_TO_MONITORING:
+            self._handle_transit_to_monitoring(namespace, mission)
+        elif state == MissionState.APPROACHING_POINT:
+            self._handle_approaching_point(namespace, mission)
+        elif state == MissionState.CAMERA_SYNC:
+            self._handle_camera_sync(namespace, mission)
+
+    def _handle_setting_rth_altitude(self, namespace: str, mission: DroneMissionStatus):
+        # Set RTH altitude before takeoff - CRITICAL for safe returns
+        # Non-blocking: send commands at 0.5s intervals, then wait 1s before transition
+
+        now = time.time()
+
+        # Initialize state entry time on first call
+        if mission.state_entry_time == 0.0:
+            mission.state_entry_time = now
+            mission.rth_altitude_cmd_count = 0
+            mission.rth_altitude_last_cmd_time = 0.0
+            self._emit_event(namespace, f"Setting RTH altitude to {mission.assigned_altitude}m")
+
+        # Send RTH altitude command up to 3 times, 0.5s apart
+        if self.cmd_set_rth_altitude:
+            if mission.rth_altitude_cmd_count < 3:
+                if now - mission.rth_altitude_last_cmd_time >= 0.5:
+                    self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+                    mission.rth_altitude_cmd_count += 1
+                    mission.rth_altitude_last_cmd_time = now
+            elif mission.rth_altitude_cmd_count == 3:
+                # All commands sent, emit confirmation once
+                self._emit_event(namespace, f"RTH altitude confirmed: {mission.assigned_altitude}m")
+                mission.rth_altitude_cmd_count = 4  # Mark as confirmed
+        else:
+            if mission.rth_altitude_cmd_count == 0:
+                self._emit_event(namespace, "WARNING: cmd_set_rth_altitude not available!")
+                mission.rth_altitude_cmd_count = 4  # Skip to wait phase
+
+        self._update_status(namespace, mission.state, f"RTH altitude set to {mission.assigned_altitude}m")
+
+        # After all commands sent + 1s wait, transition to takeoff
+        # Total time: ~2.5s (3 commands at 0.5s intervals + 1s wait)
+        time_since_last_cmd = now - mission.rth_altitude_last_cmd_time
+        if mission.rth_altitude_cmd_count >= 3 and time_since_last_cmd >= 1.0:
+            mission.state = MissionState.TAKING_OFF
+            mission.state_entry_time = 0.0  # Reset for next state
+            self._update_status(namespace, mission.state, "Taking off...")
+
+    def _handle_taking_off(self, namespace: str, mission: DroneMissionStatus):
+        # Non-blocking takeoff sequence:
+        # - Send first takeoff command immediately
+        # - Send second takeoff command after 2s
+        # - Wait until 7s total before transitioning to climb
+
+        now = time.time()
+
+        # Initialize state entry time on first call
+        if mission.state_entry_time == 0.0:
+            mission.state_entry_time = now
+            mission.takeoff_cmd_sent = False
+            mission.takeoff_second_cmd_sent = False
+
+        elapsed = now - mission.state_entry_time
+
+        takeoff_wait = 7.0
+        second_cmd_delay = 2.0
+
+        # Send first takeoff command immediately
+        if not mission.takeoff_cmd_sent and self.cmd_takeoff:
+            self.cmd_takeoff(namespace)
+            mission.takeoff_cmd_sent = True
+
+        # Send second takeoff command after delay
+        if elapsed >= second_cmd_delay and not mission.takeoff_second_cmd_sent and self.cmd_takeoff:
+            self.cmd_takeoff(namespace)
+            mission.takeoff_second_cmd_sent = True
+
+        # After wait time, transition
+        if elapsed >= takeoff_wait:
+            # Start travel time measurement from beginning of climb
+            # (includes climb + transit for accurate relay timing estimation)
+            mission.transit_start_time = time.time()
+
+            # Start climb time measurement for Free Flight mode
+            mission.climb_start_time = time.time()
+
+            # Transition to climbing and send altitude command
+            mission.state = MissionState.CLIMBING_TO_ALTITUDE
+            mission.state_entry_time = 0.0  # Reset for next state
+            mission.climb_wait_started = False  # Reset climb wait flag
+
+            if self.cmd_goto_altitude:
+                self.cmd_goto_altitude(namespace, mission.assigned_altitude)
+                self._emit_event(namespace, f"Climbing to {mission.assigned_altitude}m")
+
+            self._update_status(namespace, mission.state, f"Climbing to {mission.assigned_altitude}m")
+
+    def _handle_climbing_to_altitude(self, namespace: str, mission: DroneMissionStatus):
+        # Check if altitude reached - prefer using the altitude_reached flag from drone
+        altitude_reached = False
+        current_alt = 0.0
+        target_alt = mission.assigned_altitude
+        now = time.time()
+
+        if self.get_altitude_reached:
+            altitude_reached = altitude_reached or self.get_altitude_reached(namespace)
+
+        if self.get_drone_position:
+            _, _, current_alt = self.get_drone_position(namespace)
+            # Fallback: also check if altitude is above target (in case flag not set)
+            if current_alt >= (target_alt - self.config.altitude_tolerance):
+                altitude_reached = True
+
+        # Log altitude progress periodically (every 5 seconds)
+        if now - mission.last_alt_log_time > 5.0:
+            mission.last_alt_log_time = now
+            self._emit_event(namespace, f"Climbing: {current_alt:.1f}m / {target_alt:.1f}m (reached={altitude_reached})")
+
+        if altitude_reached:
+            # Non-blocking: wait 5 seconds before starting transit
+            wait_time = 5.0
+            if not mission.climb_wait_started:
+                mission.climb_wait_started = True
                 mission.state_entry_time = now
-                mission.rth_altitude_cmd_count = 0
-                mission.rth_altitude_last_cmd_time = 0.0
-                self._emit_event(namespace, f"Setting RTH altitude to {mission.assigned_altitude}m")
-            
-            # Send RTH altitude command up to 3 times, 0.5s apart
-            if self.cmd_set_rth_altitude:
-                if mission.rth_altitude_cmd_count < 3:
-                    if now - mission.rth_altitude_last_cmd_time >= 0.5:
-                        self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
-                        mission.rth_altitude_cmd_count += 1
-                        mission.rth_altitude_last_cmd_time = now
-                elif mission.rth_altitude_cmd_count == 3:
-                    # All commands sent, emit confirmation once
-                    self._emit_event(namespace, f"RTH altitude confirmed: {mission.assigned_altitude}m")
-                    mission.rth_altitude_cmd_count = 4  # Mark as confirmed
-            else:
-                if mission.rth_altitude_cmd_count == 0:
-                    self._emit_event(namespace, "WARNING: cmd_set_rth_altitude not available!")
-                    mission.rth_altitude_cmd_count = 4  # Skip to wait phase
-            
-            self._update_status(namespace, mission.state, f"RTH altitude set to {mission.assigned_altitude}m")
-            
-            # After all commands sent + 1s wait, transition to takeoff
-            # Total time: ~2.5s (3 commands at 0.5s intervals + 1s wait)
-            time_since_last_cmd = now - mission.rth_altitude_last_cmd_time
-            if mission.rth_altitude_cmd_count >= 3 and time_since_last_cmd >= 1.0:
-                mission.state = MissionState.TAKING_OFF
+
+                # Measure actual climb time for Free Flight mode
+                if mission.climb_start_time > 0:
+                    mission.actual_climb_time = now - mission.climb_start_time
+                    # Store in controller for later use (per drone)
+                    self._ff_measured_climb_times[namespace] = mission.actual_climb_time
+                    self._emit_event(namespace, f"Climb completed in {mission.actual_climb_time:.1f}s")
+
+                self._emit_event(namespace, f"Altitude reached, stabilizing for {wait_time}s...")
+            elif now - mission.state_entry_time >= wait_time:
+                # Wait elapsed - check mission mode
                 mission.state_entry_time = 0.0  # Reset for next state
-                self._update_status(namespace, mission.state, "Taking off...")
-        
-        elif mission.state == MissionState.TAKING_OFF:
-            # Non-blocking takeoff sequence:
-            # - Send first takeoff command immediately
-            # - Send second takeoff command after 2s
-            # - Wait until 7s total before transitioning to climb
-            
-            now = time.time()
-            
-            # Initialize state entry time on first call
-            if mission.state_entry_time == 0.0:
-                mission.state_entry_time = now
-                mission.takeoff_cmd_sent = False
-                mission.takeoff_second_cmd_sent = False
-            
-            elapsed = now - mission.state_entry_time
-            
-            takeoff_wait = 7.0
-            second_cmd_delay = 2.0
-            
-            # Send first takeoff command immediately
-            if not mission.takeoff_cmd_sent and self.cmd_takeoff:
-                self.cmd_takeoff(namespace)
-                mission.takeoff_cmd_sent = True
-            
-            # Send second takeoff command after delay
-            if elapsed >= second_cmd_delay and not mission.takeoff_second_cmd_sent and self.cmd_takeoff:
-                self.cmd_takeoff(namespace)
-                mission.takeoff_second_cmd_sent = True
-            
-            # After wait time, transition
-            if elapsed >= takeoff_wait:
-                # Start travel time measurement from beginning of climb
-                # (includes climb + transit for accurate relay timing estimation)
-                mission.transit_start_time = time.time()
-                
-                # Start climb time measurement for Free Flight mode
-                mission.climb_start_time = time.time()
-                
-                # Transition to climbing and send altitude command
-                mission.state = MissionState.CLIMBING_TO_ALTITUDE
-                mission.state_entry_time = 0.0  # Reset for next state
-                mission.climb_wait_started = False  # Reset climb wait flag
-                
-                if self.cmd_goto_altitude:
-                    self.cmd_goto_altitude(namespace, mission.assigned_altitude)
-                    self._emit_event(namespace, f"Climbing to {mission.assigned_altitude}m")
-                
-                self._update_status(namespace, mission.state, f"Climbing to {mission.assigned_altitude}m")
-        
-        elif mission.state == MissionState.CLIMBING_TO_ALTITUDE:
-            # Check if altitude reached - prefer using the altitude_reached flag from drone
-            altitude_reached = False
-            current_alt = 0.0
-            target_alt = mission.assigned_altitude
-            now = time.time()
-            
-            if self.get_altitude_reached:
-                altitude_reached = altitude_reached or self.get_altitude_reached(namespace)
-            
-            if self.get_drone_position:
-                _, _, current_alt = self.get_drone_position(namespace)
-                # Fallback: also check if altitude is above target (in case flag not set)
-                if current_alt >= (target_alt - self.config.altitude_tolerance):
-                    altitude_reached = True
-            
-            # Log altitude progress periodically (every 5 seconds)
-            if now - mission.last_alt_log_time > 5.0:
-                mission.last_alt_log_time = now
-                self._emit_event(namespace, f"Climbing: {current_alt:.1f}m / {target_alt:.1f}m (reached={altitude_reached})")
-            
-            if altitude_reached:
-                # Non-blocking: wait 5 seconds before starting transit
-                wait_time = 5.0
-                if not mission.climb_wait_started:
-                    mission.climb_wait_started = True
-                    mission.state_entry_time = now
-                    
-                    # Measure actual climb time for Free Flight mode
-                    if mission.climb_start_time > 0:
-                        mission.actual_climb_time = now - mission.climb_start_time
-                        # Store in controller for later use (per drone)
-                        self._ff_measured_climb_times[namespace] = mission.actual_climb_time
-                        self._emit_event(namespace, f"Climb completed in {mission.actual_climb_time:.1f}s")
-                    
-                    self._emit_event(namespace, f"Altitude reached, stabilizing for {wait_time}s...")
-                elif now - mission.state_entry_time >= wait_time:
-                    # Wait elapsed - check mission mode
-                    mission.state_entry_time = 0.0  # Reset for next state
-                    
-                    if self.mission_mode == MissionMode.FREE_FLIGHT:
-                        # FREE FLIGHT MODE behavior depends on whether this is a relay drone
-                        if mission.replacing_drone:
-                            # RELAY DRONE in Free Flight: Navigate to current drone's position
-                            # Capture target position from the drone we're replacing
-                            old_ns = mission.replacing_drone
-                            if self.get_drone_position:
-                                old_lat, old_lon, _ = self.get_drone_position(old_ns)
-                                mission.relay_target_lat = old_lat
-                                mission.relay_target_lon = old_lon
-                                mission.target_lat = old_lat
-                                mission.target_lon = old_lon
-                                self._emit_event(namespace, f"FREE FLIGHT RELAY: Flying to {old_ns} position ({old_lat:.6f}, {old_lon:.6f})")
-                            if self.get_drone_heading:
-                                mission.relay_target_heading = self.get_drone_heading(old_ns)
-                                mission.target_heading = mission.relay_target_heading
-                            
-                            # Put old drone in WAITING_FOR_RELAY state
-                            old_mission = self.drone_missions.get(old_ns)
-                            if old_mission:
-                                old_mission.state = MissionState.WAITING_FOR_RELAY
-                                self._update_status(old_ns, old_mission.state, f"Waiting for {namespace} to arrive")
-                                self._emit_event(old_ns, f"Waiting for {namespace} to arrive for relay handoff")
-                            
-                            # Start transit to the other drone's position
-                            mission.state = MissionState.TRANSIT_TO_MONITORING
-                            mission.transit_start_time = time.time()
-                            self._start_transit(namespace, mission)
-                            self._update_status(namespace, mission.state, "Transit to relay position")
-                        else:
-                            # FIRST DRONE in Free Flight: Start recording and give pilot control
-                            mission.state = MissionState.MONITORING
-                            mission.monitoring_start_time = time.time()
-                            
-                            # Start video recording immediately
-                            if self.cmd_start_recording and not mission.video_started:
-                                self.cmd_start_recording(namespace)
-                                mission.video_started = True
-                                self._emit_event(namespace, "FREE FLIGHT: Recording started")
-                            
-                            self._emit_event(namespace, "FREE FLIGHT: Pilot has control. Drone holding position.")
-                            self._update_status(namespace, mission.state, "Free flight - pilot control")
-                    else:
-                        # MONITORING POINT MODE: Navigate to monitoring point (default behavior)
-                        mission.state = MissionState.TRANSIT_TO_MONITORING
-                        # Note: transit_start_time was set at beginning of climb for accurate total travel time
-                        self._start_transit(namespace, mission)
-                        self._update_status(namespace, mission.state, "Transit to monitoring point")
-        
-        elif mission.state == MissionState.TRANSIT_TO_MONITORING:
-            # Log transit progress periodically
-            now = time.time()
-            
-            if self.get_drone_position:
-                lat, lon, _ = self.get_drone_position(namespace)
-                target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
-                target_lon = mission.target_lon if mission.target_lon != 0 else self.config.monitoring_lon
-                distance = self.haversine_distance(lat, lon, target_lat, target_lon)
-                
-                if now - mission.last_transit_log_time > 5.0:
-                    mission.last_transit_log_time = now
-                    self._emit_event(namespace, f"Transit: {distance:.1f}m to target")
-            
-            # CONTINUOUS POSITION TRACKING for relay replacement drones
-            # Update target more frequently in Free Flight mode (2s) vs Monitoring Point mode (10s)
-            # because in Free Flight the pilot is actively flying and position changes rapidly
-            update_interval = 2.0 if self.mission_mode == MissionMode.FREE_FLIGHT else self._trajectory_update_interval
-            if mission.replacing_drone and self.relay_state == RelayState.ACTIVE:
-                if now - self._last_trajectory_update_time >= update_interval:
-                    self._last_trajectory_update_time = now
-                    self._update_replacement_target(namespace, mission)
-            
-            self._check_approach(namespace, mission)
-        
-        elif mission.state == MissionState.APPROACHING_POINT:
-            # Already recording, check if reached (by flag or distance)
-            reached = False
-            distance = float('inf')
-            now = time.time()
-            
-            # Calculate current distance to target first (needed for tracking decision)
-            if self.get_drone_position:
-                lat, lon, _ = self.get_drone_position(namespace)
-                target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
-                target_lon = mission.target_lon if mission.target_lon != 0 else self.config.monitoring_lon
-                distance = self.haversine_distance(lat, lon, target_lat, target_lon)
-            
-            # FREE FLIGHT MODE: Continue tracking the monitoring drone's live position
-            # until drones are very close (< 2m), because the pilot is actively flying
-            # Update every 0.5s for responsive tracking during final approach
-            FF_TRACKING_STOP_DISTANCE = 2.0  # Stop tracking when within 2 meters
-            if self.mission_mode == MissionMode.FREE_FLIGHT and mission.replacing_drone:
-                if distance > FF_TRACKING_STOP_DISTANCE:
-                    if now - self._last_trajectory_update_time >= 0.5:
-                        self._last_trajectory_update_time = now
-                        self._update_replacement_target(namespace, mission)
-            
-            # Check if reached position tolerance
-            if distance <= self.config.position_tolerance:
-                reached = True
-            
-            # Only use waypoint_reached flag in PID mode as backup
-            # In DJI Native mode, the flag arrives too early (before drone has stabilized)
-            if not reached and not self.use_dji_native:
-                if self.get_waypoint_reached and self.get_waypoint_reached(namespace):
-                    reached = True
-                    self._emit_event(namespace, f"Waypoint reached flag (distance: {distance:.1f}m)")
-            
-            # Log progress periodically
-            if now - mission.last_approach_log_time > 3.0:
-                mission.last_approach_log_time = now
-                self._emit_event(namespace, f"Approaching: {distance:.1f}m to target (tolerance: {self.config.position_tolerance}m)")
-            
-            if reached:
-                mission.state = MissionState.MONITORING
-                mission.monitoring_start_time = time.time()
-                mission.state_entry_time = 0.0  # Reset for debug mode timing
-                
-                # Record actual travel time
-                mission.actual_travel_time = time.time() - mission.transit_start_time
-                self.travel_time_history.append(mission.actual_travel_time)
-                if len(self.travel_time_history) > 10:
-                    self.travel_time_history.pop(0)
-                
-                # Record horizontal transit measurements for Free Flight mode
-                if mission.horizontal_transit_start_time > 0:
-                    mission.actual_horizontal_transit_time = time.time() - mission.horizontal_transit_start_time
-                    if mission.horizontal_transit_start_lat != 0.0 and self.get_drone_position:
-                        current_lat, current_lon, _ = self.get_drone_position(namespace)
-                        mission.actual_horizontal_transit_distance = self.haversine_distance(
-                            mission.horizontal_transit_start_lat,
-                            mission.horizontal_transit_start_lon,
-                            current_lat,
-                            current_lon
-                        )
-                        # Calculate and store measured transit speed for Free Flight
-                        if mission.actual_horizontal_transit_time > 0 and mission.replacing_drone:
-                            measured_speed = mission.actual_horizontal_transit_distance / mission.actual_horizontal_transit_time
-                            self._ff_measured_transit_speed = measured_speed
-                            self._ff_first_swap_completed = True
-                            self._emit_event(namespace, f"FF Transit: {mission.actual_horizontal_transit_distance:.0f}m in {mission.actual_horizontal_transit_time:.1f}s = {measured_speed:.1f}m/s")
-                
-                self._update_status(namespace, mission.state, "Monitoring point reached")
-                self._emit_event(namespace, f"Monitoring started. Travel time: {mission.actual_travel_time:.1f}s")
-                
-                # DJI NATIVE YAW CORRECTION: DJI Native trajectory doesn't control yaw during flight,
-                # so we need to send a separate goto_yaw command after reaching the final waypoint
-                # to match the previous monitoring drone's heading (similar to how gimbal pitch is transferred)
-                if self.use_dji_native and self.cmd_goto_yaw and mission.target_heading != 0.0:
-                    self.cmd_goto_yaw(namespace, mission.target_heading)
-                    self._emit_event(namespace, f"[DJI Native] Yaw correction to {mission.target_heading:.1f}° (matching previous drone)")
-                
-                # RELAY HANDOFF: If this drone was replacing another, determine which drone does camera sync
-                # The LOWEST drone always does the 360° spin for video synchronization
-                if mission.replacing_drone:
-                    old_ns = mission.replacing_drone
-                    old_mission = self.drone_missions.get(old_ns)
-                    
-                    if old_mission and old_mission.state == MissionState.WAITING_FOR_RELAY:
-                        # Get altitudes to determine which drone is lower
-                        new_alt = mission.assigned_altitude
-                        old_alt = old_mission.assigned_altitude
-                        self._emit_event(namespace, f"Relay handoff: {old_ns} ({old_alt}m) <-> {namespace} ({new_alt}m)")
-                        
-                        # Record actual flight time for the old drone
-                        if old_mission.mission_start_time:
-                            actual_flight_time = time.time() - old_mission.mission_start_time
-                            self.flight_time_history.append(actual_flight_time)
-                            if len(self.flight_time_history) > 10:
-                                self.flight_time_history.pop(0)
-                            self._emit_event(old_ns, f"Flight time recorded: {actual_flight_time:.0f}s")
-                        
-                        # Determine which drone is LOWER - that one does the camera sync spin
-                        # The OTHER drone waits, then departs (RTH) after spin completes
-                        if old_alt <= new_alt:
-                            # Old drone (departing) is lower or equal - it does the spin then RTH
-                            sync_ns = old_ns
-                            sync_mission = old_mission
-                            sync_mission.camera_sync_next_state = "RTH"
-                            sync_mission.camera_sync_partner_drone = ""  # No partner to notify, spinning drone goes RTH itself
-                            sync_mission.camera_sync_top_drone_ns = namespace  # New drone is the top drone
-                            sync_mission.camera_sync_new_drone_ns = namespace  # New drone that will continue monitoring
-                            self._emit_event(old_ns, f"Lower drone ({old_alt}m) - will do 360° camera sync then RTH")
-                            # Capture old drone's gimbal pitch to transfer to new drone after spin
-                            if self.get_drone_gimbal_pitch:
-                                sync_mission.camera_sync_old_drone_gimbal = self.get_drone_gimbal_pitch(old_ns)
-                                self._emit_event(old_ns, f"Old drone gimbal pitch captured: {sync_mission.camera_sync_old_drone_gimbal:.1f}°")
-                            # New drone (top drone) - set gimbal to -90° during sync
-                            if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
-                                sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(namespace)
-                                self.cmd_set_gimbal_pitch(namespace, -90.0)
-                                self._emit_event(namespace, f"Top drone gimbal set to -90° (was {sync_mission.camera_sync_top_drone_previous_gimbal:.1f}°)")
-                        else:
-                            # New drone (arriving) is lower - it does the spin, then continues monitoring
-                            # Old drone (top drone) waits for spin to complete before RTH
-                            sync_ns = namespace
-                            sync_mission = mission
-                            sync_mission.camera_sync_next_state = "MONITORING"
-                            sync_mission.camera_sync_partner_drone = old_ns  # Old drone will be sent to RTH after spin
-                            sync_mission.camera_sync_top_drone_ns = old_ns  # Old drone is the top drone
-                            sync_mission.camera_sync_new_drone_ns = namespace  # New drone (self) will continue monitoring
-                            self._emit_event(namespace, f"Lower drone ({new_alt}m) - will do 360° camera sync then monitor")
-                            self._emit_event(old_ns, f"Higher drone ({old_alt}m) - waiting for spin to complete before RTH")
-                            # Capture old drone's gimbal pitch to transfer to new drone after spin
-                            if self.get_drone_gimbal_pitch:
-                                sync_mission.camera_sync_old_drone_gimbal = self.get_drone_gimbal_pitch(old_ns)
-                                self._emit_event(old_ns, f"Old drone gimbal pitch captured: {sync_mission.camera_sync_old_drone_gimbal:.1f}°")
-                            # Old drone (top drone) - set gimbal to -90° during sync
-                            if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
-                                sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(old_ns)
-                                self.cmd_set_gimbal_pitch(old_ns, -90.0)
-                                self._emit_event(old_ns, f"Top drone gimbal set to -90° (was {sync_mission.camera_sync_top_drone_previous_gimbal:.1f}°)")
-                            # Keep old drone in WAITING_FOR_RELAY - it will be sent to RTH after spin completes
-                        
-                        # Start camera sync on the LOWER drone
-                        sync_mission.state = MissionState.CAMERA_SYNC
-                        sync_mission.camera_sync_start_time = time.time()
-                        sync_mission.camera_sync_yaw_started = False
-                        sync_mission.camera_sync_yaw_phase2_started = False
-                        sync_mission.camera_sync_yaw_completed = False
-                        
-                        # Store initial heading for 360° rotation
+
+                if self.mission_mode == MissionMode.FREE_FLIGHT:
+                    # FREE FLIGHT MODE behavior depends on whether this is a relay drone
+                    if mission.replacing_drone:
+                        # RELAY DRONE in Free Flight: Navigate to current drone's position
+                        # Capture target position from the drone we're replacing
+                        old_ns = mission.replacing_drone
+                        if self.get_drone_position:
+                            old_lat, old_lon, _ = self.get_drone_position(old_ns)
+                            mission.relay_target_lat = old_lat
+                            mission.relay_target_lon = old_lon
+                            mission.target_lat = old_lat
+                            mission.target_lon = old_lon
+                            self._emit_event(namespace, f"FREE FLIGHT RELAY: Flying to {old_ns} position ({old_lat:.6f}, {old_lon:.6f})")
                         if self.get_drone_heading:
-                            sync_mission.camera_sync_initial_heading = self.get_drone_heading(sync_ns)
-                        
-                        self._update_status(sync_ns, sync_mission.state, "Camera sync - waiting 10s before yaw")
-                        self._emit_event(sync_ns, "Camera sync started - waiting 10 seconds before 360° yaw")
-                    
-                    # Clear the replacing_drone field
-                    mission.replacing_drone = ""
-        
-        elif mission.state == MissionState.MONITORING:
-            # Drone is monitoring - relay logic handles transition
-            pass
-        
-        elif mission.state == MissionState.WAITING_FOR_RELAY:
-            # Drone waiting for relay - normally waits for new drone to arrive
-            # DEBUG MODE: This state transitions automatically when relay drone reaches MONITORING
-            pass
-        
-        elif mission.state == MissionState.CAMERA_SYNC:
-            # Camera synchronization sequence:
-            # 1. Wait 10 seconds after relay drone arrives
-            # 2. Perform 360° yaw rotation
-            # 3. Wait 10 seconds after yaw completes
-            # 4. Command RTH
-            
-            elapsed = time.time() - mission.camera_sync_start_time
-            
-            # Phase 1: Wait 10 seconds before starting yaw
-            wait_before_yaw = 10.0
-            if not mission.camera_sync_yaw_started:
-                if elapsed >= wait_before_yaw:
-                    mission.camera_sync_yaw_started = True
-                    
-                    # Check if camera sync rotation is enabled
-                    if not self.config.camera_sync_enabled:
-                        # Skip rotation, go directly to completed
-                        self._emit_event(namespace, "Camera sync rotation disabled - skipping 360° yaw")
-                        mission.camera_sync_yaw_phase2_started = True
-                        mission.camera_sync_yaw_completed = True
-                        mission.camera_sync_start_time = time.time()  # Reset timer for post-wait phase
-                        self._update_status(namespace, mission.state, "Camera sync - waiting 10s (rotation skipped)")
-                    elif self.cmd_goto_yaw:
-                        # Command 360° yaw rotation
-                        # Calculate target heading: current heading + 360° (full rotation)
-                        target_heading = (mission.camera_sync_initial_heading + 360.0) % 360.0
-                        # Since we want a full rotation, we'll do it in steps or use a special yaw command
-                        # For now, we rotate to initial + 180, then to initial (which completes the circle)
-                        self.cmd_goto_yaw(namespace, (mission.camera_sync_initial_heading + 180.0) % 360.0)
-                        self._emit_event(namespace, "Starting 360° yaw rotation (phase 1/2)")
-                        self._update_status(namespace, mission.state, "Camera sync - 360° yaw in progress")
-                        mission.camera_sync_start_time = time.time()  # Reset timer for yaw phase
+                            mission.relay_target_heading = self.get_drone_heading(old_ns)
+                            mission.target_heading = mission.relay_target_heading
+
+                        # Put old drone in WAITING_FOR_RELAY state
+                        old_mission = self.drone_missions.get(old_ns)
+                        if old_mission:
+                            old_mission.state = MissionState.WAITING_FOR_RELAY
+                            self._update_status(old_ns, old_mission.state, f"Waiting for {namespace} to arrive")
+                            self._emit_event(old_ns, f"Waiting for {namespace} to arrive for relay handoff")
+
+                        # Start transit to the other drone's position
+                        mission.state = MissionState.TRANSIT_TO_MONITORING
+                        mission.transit_start_time = time.time()
+                        self._start_transit(namespace, mission)
+                        self._update_status(namespace, mission.state, "Transit to relay position")
                     else:
-                        self._emit_event(namespace, "Warning: cmd_goto_yaw not available, skipping rotation")
-                        mission.camera_sync_yaw_completed = True
-                        mission.camera_sync_start_time = time.time()  # Reset timer for post-wait phase
-            
-            # Phase 2a: Monitor yaw progress for first half of rotation (0° -> 180°)
-            elif not mission.camera_sync_yaw_phase2_started:
-                # Check if yaw reached (first half of rotation)
-                yaw_reached = False
-                if self.get_drone_heading:
-                    current_heading = self.get_drone_heading(namespace)
-                    target_heading = (mission.camera_sync_initial_heading + 180.0) % 360.0
-                    heading_diff = abs(current_heading - target_heading)
-                    # Account for wrap-around at 360°
-                    if heading_diff > 180:
-                        heading_diff = 360 - heading_diff
-                    yaw_reached = heading_diff < 10.0  # Within 10 degrees
-                
-                # Also timeout after 30 seconds if yaw command not responding
-                if yaw_reached or elapsed >= 30.0:
-                    if elapsed >= 30.0 and not yaw_reached:
-                        self._emit_event(namespace, "Yaw phase 1 timeout, continuing...")
-                    
-                    # Start second half of rotation (180° -> 360°/0°)
-                    if self.cmd_goto_yaw:
-                        self.cmd_goto_yaw(namespace, mission.camera_sync_initial_heading)
-                        self._emit_event(namespace, "360° yaw rotation (phase 2/2)")
-                    
-                    mission.camera_sync_yaw_phase2_started = True
-                    mission.camera_sync_start_time = time.time()  # Reset timer for phase 2
-                    self._update_status(namespace, mission.state, "Camera sync - yaw phase 2/2")
-            
-            # Phase 2b: Monitor yaw progress for second half of rotation (180° -> 0°)
-            elif not mission.camera_sync_yaw_completed:
-                # Check if yaw reached (second half - back to initial heading)
-                yaw_reached = False
-                if self.get_drone_heading:
-                    current_heading = self.get_drone_heading(namespace)
-                    target_heading = mission.camera_sync_initial_heading
-                    heading_diff = abs(current_heading - target_heading)
-                    # Account for wrap-around at 360°
-                    if heading_diff > 180:
-                        heading_diff = 360 - heading_diff
-                    yaw_reached = heading_diff < 10.0  # Within 10 degrees
-                
-                # Also timeout after 30 seconds if yaw command not responding
-                if yaw_reached or elapsed >= 30.0:
-                    if elapsed >= 30.0 and not yaw_reached:
-                        self._emit_event(namespace, "Yaw phase 2 timeout, continuing...")
-                    
-                    mission.camera_sync_yaw_completed = True
-                    mission.camera_sync_start_time = time.time()  # Reset timer for post-yaw wait
-                    self._emit_event(namespace, "360° yaw rotation completed")
-                    self._update_status(namespace, mission.state, "Camera sync - waiting 10s before transition")
-            
-            # Phase 3: Wait 10 seconds after yaw, then transition to next state (RTH or MONITORING)
-            else:
-                phase3_wait = 10.0
-                if elapsed >= phase3_wait:
-                    self._emit_event(namespace, "360° yaw wait complete")
-                    
-                    if mission.camera_sync_next_state == "MONITORING":
-                        # This drone continues monitoring (it was the arriving lower drone)
+                        # FIRST DRONE in Free Flight: Start recording and give pilot control
                         mission.state = MissionState.MONITORING
                         mission.monitoring_start_time = time.time()
-                        mission.state_entry_time = 0.0  # Reset for debug mode
-                        
-                        # Transfer old drone's gimbal pitch to the new monitoring drone
-                        if self.cmd_set_gimbal_pitch and mission.camera_sync_old_drone_gimbal != 0.0:
-                            self.cmd_set_gimbal_pitch(namespace, mission.camera_sync_old_drone_gimbal)
-                            self._emit_event(namespace, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
-                        
-                        # In Free Flight mode, pilot now has control
-                        if self.mission_mode == MissionMode.FREE_FLIGHT:
-                            self._update_status(namespace, mission.state, "FREE FLIGHT: Camera sync complete, pilot has control")
-                            self._emit_event(namespace, "FREE FLIGHT: Camera sync complete - pilot now has control")
-                        else:
-                            self._update_status(namespace, mission.state, "Monitoring after camera sync")
-                            self._emit_event(namespace, "Camera sync complete - now monitoring")
-                        
-                        # Now send the partner drone (old/departing drone) to RTH
-                        if mission.camera_sync_partner_drone:
-                            partner_ns = mission.camera_sync_partner_drone
-                            if partner_ns in self.drone_missions:
-                                partner_mission = self.drone_missions[partner_ns]
-                                self._emit_event(partner_ns, "Spin complete - now departing")
-                                
-                                # Stop recording on partner
-                                if partner_mission.video_started and self.cmd_stop_recording:
-                                    self.cmd_stop_recording(partner_ns)
-                                    self._emit_event(partner_ns, "Recording stopped")
-                                
-                                # Set RTH altitude
-                                if self.cmd_set_rth_altitude:
-                                    self._emit_event(partner_ns, f"Setting RTH altitude: {partner_mission.assigned_altitude}m")
-                                    self.cmd_set_rth_altitude(partner_ns, partner_mission.assigned_altitude)
-                                    time.sleep(0.5)
-                                
-                                # Command RTH
-                                if self.cmd_rth:
-                                    self._emit_event(partner_ns, f"Commanding RTH at {partner_mission.assigned_altitude}m")
-                                    self.cmd_rth(partner_ns)
-                                
-                                partner_mission.state = MissionState.RETURNING_HOME
-                                partner_mission.state_entry_time = 0.0  # Reset for debug mode
-                                partner_mission.rth_start_time = time.time()
-                                self._update_status(partner_ns, partner_mission.state, "Returning home after relay handoff")
-                                
-                                # Clear manual swap mode - swap is complete
-                                self._manual_swap_active = False
-                            
-                            # Clear the partner reference
-                            mission.camera_sync_partner_drone = ""
+
+                        # Start video recording immediately
+                        if self.cmd_start_recording and not mission.video_started:
+                            self.cmd_start_recording(namespace)
+                            mission.video_started = True
+                            self._emit_event(namespace, "FREE FLIGHT: Recording started")
+
+                        self._emit_event(namespace, "FREE FLIGHT: Pilot has control. Drone holding position.")
+                        self._update_status(namespace, mission.state, "Free flight - pilot control")
+                else:
+                    # MONITORING POINT MODE: Navigate to monitoring point (default behavior)
+                    mission.state = MissionState.TRANSIT_TO_MONITORING
+                    # Note: transit_start_time was set at beginning of climb for accurate total travel time
+                    self._start_transit(namespace, mission)
+                    self._update_status(namespace, mission.state, "Transit to monitoring point")
+
+    def _handle_transit_to_monitoring(self, namespace: str, mission: DroneMissionStatus):
+        # Log transit progress periodically
+        now = time.time()
+
+        if self.get_drone_position:
+            lat, lon, _ = self.get_drone_position(namespace)
+            target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
+            target_lon = mission.target_lon if mission.target_lon != 0 else self.config.monitoring_lon
+            distance = self.haversine_distance(lat, lon, target_lat, target_lon)
+
+            if now - mission.last_transit_log_time > 5.0:
+                mission.last_transit_log_time = now
+                self._emit_event(namespace, f"Transit: {distance:.1f}m to target")
+
+        # CONTINUOUS POSITION TRACKING for relay replacement drones
+        # Update target more frequently in Free Flight mode (2s) vs Monitoring Point mode (10s)
+        # because in Free Flight the pilot is actively flying and position changes rapidly
+        update_interval = 2.0 if self.mission_mode == MissionMode.FREE_FLIGHT else self._trajectory_update_interval
+        if mission.replacing_drone and self.relay_state == RelayState.ACTIVE:
+            if now - self._last_trajectory_update_time >= update_interval:
+                self._last_trajectory_update_time = now
+                self._update_replacement_target(namespace, mission)
+
+        self._check_approach(namespace, mission)
+
+    def _handle_approaching_point(self, namespace: str, mission: DroneMissionStatus):
+        # Already recording, check if reached (by flag or distance)
+        reached = False
+        distance = float('inf')
+        now = time.time()
+
+        # Calculate current distance to target first (needed for tracking decision)
+        if self.get_drone_position:
+            lat, lon, _ = self.get_drone_position(namespace)
+            target_lat = mission.target_lat if mission.target_lat != 0 else self.config.monitoring_lat
+            target_lon = mission.target_lon if mission.target_lon != 0 else self.config.monitoring_lon
+            distance = self.haversine_distance(lat, lon, target_lat, target_lon)
+
+        # FREE FLIGHT MODE: Continue tracking the monitoring drone's live position
+        # until drones are very close (< 2m), because the pilot is actively flying
+        # Update every 0.5s for responsive tracking during final approach
+        FF_TRACKING_STOP_DISTANCE = 2.0  # Stop tracking when within 2 meters
+        if self.mission_mode == MissionMode.FREE_FLIGHT and mission.replacing_drone:
+            if distance > FF_TRACKING_STOP_DISTANCE:
+                if now - self._last_trajectory_update_time >= 0.5:
+                    self._last_trajectory_update_time = now
+                    self._update_replacement_target(namespace, mission)
+
+        # Check if reached position tolerance
+        if distance <= self.config.position_tolerance:
+            reached = True
+
+        # Only use waypoint_reached flag in PID mode as backup
+        # In DJI Native mode, the flag arrives too early (before drone has stabilized)
+        if not reached and not self.use_dji_native:
+            if self.get_waypoint_reached and self.get_waypoint_reached(namespace):
+                reached = True
+                self._emit_event(namespace, f"Waypoint reached flag (distance: {distance:.1f}m)")
+
+        # Log progress periodically
+        if now - mission.last_approach_log_time > 3.0:
+            mission.last_approach_log_time = now
+            self._emit_event(namespace, f"Approaching: {distance:.1f}m to target (tolerance: {self.config.position_tolerance}m)")
+
+        if reached:
+            mission.state = MissionState.MONITORING
+            mission.monitoring_start_time = time.time()
+            mission.state_entry_time = 0.0  # Reset for debug mode timing
+
+            # Record actual travel time
+            mission.actual_travel_time = time.time() - mission.transit_start_time
+            self.travel_time_history.append(mission.actual_travel_time)
+            if len(self.travel_time_history) > 10:
+                self.travel_time_history.pop(0)
+
+            # Record horizontal transit measurements for Free Flight mode
+            if mission.horizontal_transit_start_time > 0:
+                mission.actual_horizontal_transit_time = time.time() - mission.horizontal_transit_start_time
+                if mission.horizontal_transit_start_lat != 0.0 and self.get_drone_position:
+                    current_lat, current_lon, _ = self.get_drone_position(namespace)
+                    mission.actual_horizontal_transit_distance = self.haversine_distance(
+                        mission.horizontal_transit_start_lat,
+                        mission.horizontal_transit_start_lon,
+                        current_lat,
+                        current_lon
+                    )
+                    # Calculate and store measured transit speed for Free Flight
+                    if mission.actual_horizontal_transit_time > 0 and mission.replacing_drone:
+                        measured_speed = mission.actual_horizontal_transit_distance / mission.actual_horizontal_transit_time
+                        self._ff_measured_transit_speed = measured_speed
+                        self._ff_first_swap_completed = True
+                        self._emit_event(namespace, f"FF Transit: {mission.actual_horizontal_transit_distance:.0f}m in {mission.actual_horizontal_transit_time:.1f}s = {measured_speed:.1f}m/s")
+
+            self._update_status(namespace, mission.state, "Monitoring point reached")
+            self._emit_event(namespace, f"Monitoring started. Travel time: {mission.actual_travel_time:.1f}s")
+
+            # DJI NATIVE YAW CORRECTION: DJI Native trajectory doesn't control yaw during flight,
+            # so we need to send a separate goto_yaw command after reaching the final waypoint
+            # to match the previous monitoring drone's heading (similar to how gimbal pitch is transferred)
+            if self.use_dji_native and self.cmd_goto_yaw and mission.target_heading != 0.0:
+                self.cmd_goto_yaw(namespace, mission.target_heading)
+                self._emit_event(namespace, f"[DJI Native] Yaw correction to {mission.target_heading:.1f}° (matching previous drone)")
+
+            # RELAY HANDOFF: If this drone was replacing another, determine which drone does camera sync
+            # The LOWEST drone always does the 360° spin for video synchronization
+            if mission.replacing_drone:
+                old_ns = mission.replacing_drone
+                old_mission = self.drone_missions.get(old_ns)
+
+                if old_mission and old_mission.state == MissionState.WAITING_FOR_RELAY:
+                    # Get altitudes to determine which drone is lower
+                    new_alt = mission.assigned_altitude
+                    old_alt = old_mission.assigned_altitude
+                    self._emit_event(namespace, f"Relay handoff: {old_ns} ({old_alt}m) <-> {namespace} ({new_alt}m)")
+
+                    # Record actual flight time for the old drone
+                    if old_mission.mission_start_time:
+                        actual_flight_time = time.time() - old_mission.mission_start_time
+                        self.flight_time_history.append(actual_flight_time)
+                        if len(self.flight_time_history) > 10:
+                            self.flight_time_history.pop(0)
+                        self._emit_event(old_ns, f"Flight time recorded: {actual_flight_time:.0f}s")
+
+                    # Determine which drone is LOWER - that one does the camera sync spin
+                    # The OTHER drone waits, then departs (RTH) after spin completes
+                    if old_alt <= new_alt:
+                        # Old drone (departing) is lower or equal - it does the spin then RTH
+                        sync_ns = old_ns
+                        sync_mission = old_mission
+                        sync_mission.camera_sync_next_state = "RTH"
+                        sync_mission.camera_sync_partner_drone = ""  # No partner to notify, spinning drone goes RTH itself
+                        sync_mission.camera_sync_top_drone_ns = namespace  # New drone is the top drone
+                        sync_mission.camera_sync_new_drone_ns = namespace  # New drone that will continue monitoring
+                        self._emit_event(old_ns, f"Lower drone ({old_alt}m) - will do 360° camera sync then RTH")
+                        # Capture old drone's gimbal pitch to transfer to new drone after spin
+                        if self.get_drone_gimbal_pitch:
+                            sync_mission.camera_sync_old_drone_gimbal = self.get_drone_gimbal_pitch(old_ns)
+                            self._emit_event(old_ns, f"Old drone gimbal pitch captured: {sync_mission.camera_sync_old_drone_gimbal:.1f}°")
+                        # New drone (top drone) - set gimbal to -90° during sync
+                        if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
+                            sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(namespace)
+                            self.cmd_set_gimbal_pitch(namespace, -90.0)
+                            self._emit_event(namespace, f"Top drone gimbal set to -90° (was {sync_mission.camera_sync_top_drone_previous_gimbal:.1f}°)")
                     else:
-                        # This drone goes to RTH (default, it was the departing drone)
-                        # Transfer old drone's gimbal pitch to the new monitoring drone
-                        if mission.camera_sync_new_drone_ns and self.cmd_set_gimbal_pitch:
-                            new_drone_ns = mission.camera_sync_new_drone_ns
-                            if mission.camera_sync_old_drone_gimbal != 0.0:
-                                self.cmd_set_gimbal_pitch(new_drone_ns, mission.camera_sync_old_drone_gimbal)
-                                self._emit_event(new_drone_ns, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
-                        
-                        # Stop recording
-                        if mission.video_started and self.cmd_stop_recording:
-                            self.cmd_stop_recording(namespace)
-                            self._emit_event(namespace, "Recording stopped")
-                        
-                        # Re-set RTH altitude before RTH command
-                        if self.cmd_set_rth_altitude:
-                            self._emit_event(namespace, f"Confirming RTH altitude: {mission.assigned_altitude}m")
-                            self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
-                            time.sleep(0.5)
-                        
-                        # Command RTH
-                        if self.cmd_rth:
-                            self._emit_event(namespace, f"Commanding RTH at {mission.assigned_altitude}m")
-                            self.cmd_rth(namespace)
-                        
-                        mission.state = MissionState.RETURNING_HOME
-                        mission.state_entry_time = 0.0  # Reset for debug mode
-                        mission.rth_start_time = time.time()
-                        self._update_status(namespace, mission.state, "Returning home after camera sync")
-                        self._emit_event(namespace, "Camera sync complete - returning home")
-                        
-                        # Clear manual swap mode - swap is complete
-                        self._manual_swap_active = False
-        
-        elif mission.state == MissionState.RETURNING_HOME:
-            # Drone returning home - landing detection is handled by GUI
-            pass
-        
-        elif mission.state == MissionState.COMPLETED:
-            # Mission completed - drone has landed
-            pass
-    
+                        # New drone (arriving) is lower - it does the spin, then continues monitoring
+                        # Old drone (top drone) waits for spin to complete before RTH
+                        sync_ns = namespace
+                        sync_mission = mission
+                        sync_mission.camera_sync_next_state = "MONITORING"
+                        sync_mission.camera_sync_partner_drone = old_ns  # Old drone will be sent to RTH after spin
+                        sync_mission.camera_sync_top_drone_ns = old_ns  # Old drone is the top drone
+                        sync_mission.camera_sync_new_drone_ns = namespace  # New drone (self) will continue monitoring
+                        self._emit_event(namespace, f"Lower drone ({new_alt}m) - will do 360° camera sync then monitor")
+                        self._emit_event(old_ns, f"Higher drone ({old_alt}m) - waiting for spin to complete before RTH")
+                        # Capture old drone's gimbal pitch to transfer to new drone after spin
+                        if self.get_drone_gimbal_pitch:
+                            sync_mission.camera_sync_old_drone_gimbal = self.get_drone_gimbal_pitch(old_ns)
+                            self._emit_event(old_ns, f"Old drone gimbal pitch captured: {sync_mission.camera_sync_old_drone_gimbal:.1f}°")
+                        # Old drone (top drone) - set gimbal to -90° during sync
+                        if self.get_drone_gimbal_pitch and self.cmd_set_gimbal_pitch:
+                            sync_mission.camera_sync_top_drone_previous_gimbal = self.get_drone_gimbal_pitch(old_ns)
+                            self.cmd_set_gimbal_pitch(old_ns, -90.0)
+                            self._emit_event(old_ns, f"Top drone gimbal set to -90° (was {sync_mission.camera_sync_top_drone_previous_gimbal:.1f}°)")
+                        # Keep old drone in WAITING_FOR_RELAY - it will be sent to RTH after spin completes
+
+                    # Start camera sync on the LOWER drone
+                    sync_mission.state = MissionState.CAMERA_SYNC
+                    sync_mission.camera_sync_start_time = time.time()
+                    sync_mission.camera_sync_yaw_started = False
+                    sync_mission.camera_sync_yaw_phase2_started = False
+                    sync_mission.camera_sync_yaw_completed = False
+
+                    # Store initial heading for 360° rotation
+                    if self.get_drone_heading:
+                        sync_mission.camera_sync_initial_heading = self.get_drone_heading(sync_ns)
+
+                    self._update_status(sync_ns, sync_mission.state, "Camera sync - waiting 10s before yaw")
+                    self._emit_event(sync_ns, "Camera sync started - waiting 10 seconds before 360° yaw")
+
+                # Clear the replacing_drone field
+                mission.replacing_drone = ""
+
+    def _handle_camera_sync(self, namespace: str, mission: DroneMissionStatus):
+        # Camera synchronization sequence:
+        # 1. Wait 10 seconds after relay drone arrives
+        # 2. Perform 360° yaw rotation
+        # 3. Wait 10 seconds after yaw completes
+        # 4. Command RTH
+
+        elapsed = time.time() - mission.camera_sync_start_time
+
+        # Phase 1: Wait 10 seconds before starting yaw
+        wait_before_yaw = 10.0
+        if not mission.camera_sync_yaw_started:
+            if elapsed >= wait_before_yaw:
+                mission.camera_sync_yaw_started = True
+
+                # Check if camera sync rotation is enabled
+                if not self.config.camera_sync_enabled:
+                    # Skip rotation, go directly to completed
+                    self._emit_event(namespace, "Camera sync rotation disabled - skipping 360° yaw")
+                    mission.camera_sync_yaw_phase2_started = True
+                    mission.camera_sync_yaw_completed = True
+                    mission.camera_sync_start_time = time.time()  # Reset timer for post-wait phase
+                    self._update_status(namespace, mission.state, "Camera sync - waiting 10s (rotation skipped)")
+                elif self.cmd_goto_yaw:
+                    # Command 360° yaw rotation
+                    # Calculate target heading: current heading + 360° (full rotation)
+                    target_heading = (mission.camera_sync_initial_heading + 360.0) % 360.0
+                    # Since we want a full rotation, we'll do it in steps or use a special yaw command
+                    # For now, we rotate to initial + 180, then to initial (which completes the circle)
+                    self.cmd_goto_yaw(namespace, (mission.camera_sync_initial_heading + 180.0) % 360.0)
+                    self._emit_event(namespace, "Starting 360° yaw rotation (phase 1/2)")
+                    self._update_status(namespace, mission.state, "Camera sync - 360° yaw in progress")
+                    mission.camera_sync_start_time = time.time()  # Reset timer for yaw phase
+                else:
+                    self._emit_event(namespace, "Warning: cmd_goto_yaw not available, skipping rotation")
+                    mission.camera_sync_yaw_completed = True
+                    mission.camera_sync_start_time = time.time()  # Reset timer for post-wait phase
+
+        # Phase 2a: Monitor yaw progress for first half of rotation (0° -> 180°)
+        elif not mission.camera_sync_yaw_phase2_started:
+            # Check if yaw reached (first half of rotation)
+            yaw_reached = False
+            if self.get_drone_heading:
+                current_heading = self.get_drone_heading(namespace)
+                target_heading = (mission.camera_sync_initial_heading + 180.0) % 360.0
+                heading_diff = abs(current_heading - target_heading)
+                # Account for wrap-around at 360°
+                if heading_diff > 180:
+                    heading_diff = 360 - heading_diff
+                yaw_reached = heading_diff < 10.0  # Within 10 degrees
+
+            # Also timeout after 30 seconds if yaw command not responding
+            if yaw_reached or elapsed >= 30.0:
+                if elapsed >= 30.0 and not yaw_reached:
+                    self._emit_event(namespace, "Yaw phase 1 timeout, continuing...")
+
+                # Start second half of rotation (180° -> 360°/0°)
+                if self.cmd_goto_yaw:
+                    self.cmd_goto_yaw(namespace, mission.camera_sync_initial_heading)
+                    self._emit_event(namespace, "360° yaw rotation (phase 2/2)")
+
+                mission.camera_sync_yaw_phase2_started = True
+                mission.camera_sync_start_time = time.time()  # Reset timer for phase 2
+                self._update_status(namespace, mission.state, "Camera sync - yaw phase 2/2")
+
+        # Phase 2b: Monitor yaw progress for second half of rotation (180° -> 0°)
+        elif not mission.camera_sync_yaw_completed:
+            # Check if yaw reached (second half - back to initial heading)
+            yaw_reached = False
+            if self.get_drone_heading:
+                current_heading = self.get_drone_heading(namespace)
+                target_heading = mission.camera_sync_initial_heading
+                heading_diff = abs(current_heading - target_heading)
+                # Account for wrap-around at 360°
+                if heading_diff > 180:
+                    heading_diff = 360 - heading_diff
+                yaw_reached = heading_diff < 10.0  # Within 10 degrees
+
+            # Also timeout after 30 seconds if yaw command not responding
+            if yaw_reached or elapsed >= 30.0:
+                if elapsed >= 30.0 and not yaw_reached:
+                    self._emit_event(namespace, "Yaw phase 2 timeout, continuing...")
+
+                mission.camera_sync_yaw_completed = True
+                mission.camera_sync_start_time = time.time()  # Reset timer for post-yaw wait
+                self._emit_event(namespace, "360° yaw rotation completed")
+                self._update_status(namespace, mission.state, "Camera sync - waiting 10s before transition")
+
+        # Phase 3: Wait 10 seconds after yaw, then transition to next state (RTH or MONITORING)
+        else:
+            phase3_wait = 10.0
+            if elapsed >= phase3_wait:
+                self._emit_event(namespace, "360° yaw wait complete")
+
+                if mission.camera_sync_next_state == "MONITORING":
+                    # This drone continues monitoring (it was the arriving lower drone)
+                    mission.state = MissionState.MONITORING
+                    mission.monitoring_start_time = time.time()
+                    mission.state_entry_time = 0.0  # Reset for debug mode
+
+                    # Transfer old drone's gimbal pitch to the new monitoring drone
+                    if self.cmd_set_gimbal_pitch and mission.camera_sync_old_drone_gimbal != 0.0:
+                        self.cmd_set_gimbal_pitch(namespace, mission.camera_sync_old_drone_gimbal)
+                        self._emit_event(namespace, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
+
+                    # In Free Flight mode, pilot now has control
+                    if self.mission_mode == MissionMode.FREE_FLIGHT:
+                        self._update_status(namespace, mission.state, "FREE FLIGHT: Camera sync complete, pilot has control")
+                        self._emit_event(namespace, "FREE FLIGHT: Camera sync complete - pilot now has control")
+                    else:
+                        self._update_status(namespace, mission.state, "Monitoring after camera sync")
+                        self._emit_event(namespace, "Camera sync complete - now monitoring")
+
+                    # Now send the partner drone (old/departing drone) to RTH
+                    if mission.camera_sync_partner_drone:
+                        partner_ns = mission.camera_sync_partner_drone
+                        if partner_ns in self.drone_missions:
+                            partner_mission = self.drone_missions[partner_ns]
+                            self._emit_event(partner_ns, "Spin complete - now departing")
+
+                            # Stop recording on partner
+                            if partner_mission.video_started and self.cmd_stop_recording:
+                                self.cmd_stop_recording(partner_ns)
+                                self._emit_event(partner_ns, "Recording stopped")
+
+                            # Set RTH altitude
+                            if self.cmd_set_rth_altitude:
+                                self._emit_event(partner_ns, f"Setting RTH altitude: {partner_mission.assigned_altitude}m")
+                                self.cmd_set_rth_altitude(partner_ns, partner_mission.assigned_altitude)
+                                time.sleep(0.5)
+
+                            # Command RTH
+                            if self.cmd_rth:
+                                self._emit_event(partner_ns, f"Commanding RTH at {partner_mission.assigned_altitude}m")
+                                self.cmd_rth(partner_ns)
+
+                            partner_mission.state = MissionState.RETURNING_HOME
+                            partner_mission.state_entry_time = 0.0  # Reset for debug mode
+                            partner_mission.rth_start_time = time.time()
+                            self._update_status(partner_ns, partner_mission.state, "Returning home after relay handoff")
+
+                            # Clear manual swap mode - swap is complete
+                            self._manual_swap_active = False
+
+                        # Clear the partner reference
+                        mission.camera_sync_partner_drone = ""
+                else:
+                    # This drone goes to RTH (default, it was the departing drone)
+                    # Transfer old drone's gimbal pitch to the new monitoring drone
+                    if mission.camera_sync_new_drone_ns and self.cmd_set_gimbal_pitch:
+                        new_drone_ns = mission.camera_sync_new_drone_ns
+                        if mission.camera_sync_old_drone_gimbal != 0.0:
+                            self.cmd_set_gimbal_pitch(new_drone_ns, mission.camera_sync_old_drone_gimbal)
+                            self._emit_event(new_drone_ns, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
+
+                    # Stop recording
+                    if mission.video_started and self.cmd_stop_recording:
+                        self.cmd_stop_recording(namespace)
+                        self._emit_event(namespace, "Recording stopped")
+
+                    # Re-set RTH altitude before RTH command
+                    if self.cmd_set_rth_altitude:
+                        self._emit_event(namespace, f"Confirming RTH altitude: {mission.assigned_altitude}m")
+                        self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+                        time.sleep(0.5)
+
+                    # Command RTH
+                    if self.cmd_rth:
+                        self._emit_event(namespace, f"Commanding RTH at {mission.assigned_altitude}m")
+                        self.cmd_rth(namespace)
+
+                    mission.state = MissionState.RETURNING_HOME
+                    mission.state_entry_time = 0.0  # Reset for debug mode
+                    mission.rth_start_time = time.time()
+                    self._update_status(namespace, mission.state, "Returning home after camera sync")
+                    self._emit_event(namespace, "Camera sync complete - returning home")
+
+                    # Clear manual swap mode - swap is complete
+                    self._manual_swap_active = False
+
     def _start_transit(self, namespace: str, mission: DroneMissionStatus):
         """Start transit to monitoring point (or current monitoring drone's position for relay)."""
         if not self.get_drone_position:
