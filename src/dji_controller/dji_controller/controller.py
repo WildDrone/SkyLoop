@@ -7,17 +7,18 @@ This file was written as part of the WildDrone project and implements a ROS 2 no
 via the WildBridge app. The node handles both command reception and telemetry publishing.
 """
 
+import ast
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Empty, String, Float64MultiArray, Float64, Int32, Bool
 from sensor_msgs.msg import NavSatFix
 from geometry_msgs.msg import Vector3
-from datetime import datetime
 from requests.exceptions import RequestException
 
-from dji_controller.submodules.dji_interface import *
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
-import numpy as np
+from dji_controller.submodules.dji_interface import DJIInterface
 
 
 class DjiNode(Node):

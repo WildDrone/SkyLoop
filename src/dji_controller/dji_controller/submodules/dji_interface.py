@@ -12,9 +12,7 @@ License: MIT
 For more information, visit: https://github.com/WildDrone/WildBridge
 """
 
-import cv2
 import requests
-import ast
 import json
 import socket
 import threading
@@ -228,7 +226,6 @@ class DJIInterface:
                 continue
             except Exception as e:
                 print(f"Telemetry connection error: {e}")
-                import time
                 time.sleep(1)  # Wait before reconnecting
             finally:
                 if self._telemetry_socket:
@@ -571,9 +568,8 @@ class DJIInterface:
         return self.isCameraRecording()
 
 if __name__ == '__main__':
-    import time
     import sys
-    
+
     IP_RC = "10.102.252.30"  # REPLACE WITH YOUR RC IP
     
     if len(sys.argv) > 1:
