@@ -10,13 +10,11 @@ Project: WildDrone
 import time
 import math
 import threading
-import csv
-import os
-from datetime import datetime
 from typing import Dict, List, Optional, Callable, Tuple
 import logging
 
 from groundstation import navigation
+from groundstation.mission_logging import MissionCsvLogger
 from groundstation.models import (
     MissionState, RelayState, MissionMode,
     DroneMissionStatus, RelayMissionConfig,
@@ -54,15 +52,10 @@ class MissionController:
         # Command and event logging
         self._command_log: List[str] = []  # Log of all commands sent
         self._event_log: List[Tuple[str, str, str, str]] = []  # (timestamp, namespace, state, message)
-        
-        # CSV logging configuration
-        self._csv_log_dir: str = os.path.expanduser("~/wildperpetua_logs")
-        self._csv_session_id: str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._csv_commands_file: Optional[str] = None
-        self._csv_events_file: Optional[str] = None
-        self._csv_positions_file: Optional[str] = None
-        self._csv_logging_enabled: bool = False
-        
+
+        # CSV logging (disabled until enable_csv_logging is called)
+        self._csv = MissionCsvLogger()
+
         # Drone tracking
         self.drone_missions: Dict[str, DroneMissionStatus] = {}
         self.drone_order: List[str] = []  # Order for relay
@@ -201,10 +194,8 @@ class MissionController:
         # Always log commands
         logger.info(f"🔹 CMD: {log_entry}")
         self._emit_event(namespace, f"CMD: {cmd_name}({args_str})")
-        
-        # Write to CSV if enabled
-        if self._csv_logging_enabled and self._csv_commands_file:
-            self._write_csv_command(timestamp, namespace, cmd_name, args_str)
+
+        self._csv.write_command(namespace, cmd_name, args_str)
     
     def get_command_log(self) -> List[str]:
         """Get the command log for display."""
@@ -219,127 +210,28 @@ class MissionController:
     # ========================================================================
     
     def enable_csv_logging(self, enabled: bool = True, log_dir: str = None):
-        """
-        Enable or disable CSV logging.
-        
+        """Enable or disable CSV logging.
+
         Args:
             enabled: Enable CSV logging
             log_dir: Directory to save CSV files (default: ~/wildperpetua_logs)
         """
-        if log_dir:
-            self._csv_log_dir = os.path.expanduser(log_dir)
-        
-        self._csv_logging_enabled = enabled
-        
         if enabled:
-            # Create log directory
-            os.makedirs(self._csv_log_dir, exist_ok=True)
-            
-            # Generate session ID and file paths
-            self._csv_session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self._csv_commands_file = os.path.join(
-                self._csv_log_dir, f"commands_{self._csv_session_id}.csv"
-            )
-            self._csv_events_file = os.path.join(
-                self._csv_log_dir, f"events_{self._csv_session_id}.csv"
-            )
-            self._csv_positions_file = os.path.join(
-                self._csv_log_dir, f"positions_{self._csv_session_id}.csv"
-            )
-            
-            # Initialize CSV files with headers
-            self._init_csv_files()
-            
-            logger.info(f"📁 CSV logging enabled: {self._csv_log_dir}")
-            logger.info(f"   Commands: {self._csv_commands_file}")
-            logger.info(f"   Events: {self._csv_events_file}")
-            logger.info(f"   Positions: {self._csv_positions_file}")
+            self._csv.enable(log_dir)
         else:
-            logger.info("📁 CSV logging disabled")
-    
-    def _init_csv_files(self):
-        """Initialize CSV files with headers."""
-        # Commands file
-        with open(self._csv_commands_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['timestamp', 'datetime', 'namespace', 'command', 'arguments'])
-        
-        # Events file
-        with open(self._csv_events_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['timestamp', 'datetime', 'namespace', 'state', 'message'])
-        
-        # Positions file
-        with open(self._csv_positions_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['timestamp', 'datetime', 'namespace', 'latitude', 'longitude', 'altitude', 'heading', 'battery', 'state'])
-    
-    def _write_csv_command(self, time_str: str, namespace: str, command: str, args: str):
-        """Write a command to the CSV file."""
-        try:
-            with open(self._csv_commands_file, 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    time.time(),
-                    datetime.now().isoformat(),
-                    namespace,
-                    command,
-                    args
-                ])
-        except Exception as e:
-            logger.error(f"Failed to write command to CSV: {e}")
-    
-    def _write_csv_event(self, namespace: str, state: str, message: str):
-        """Write an event to the CSV file."""
-        if not self._csv_logging_enabled or not self._csv_events_file:
-            return
-        try:
-            with open(self._csv_events_file, 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    time.time(),
-                    datetime.now().isoformat(),
-                    namespace,
-                    state,
-                    message
-                ])
-        except Exception as e:
-            logger.error(f"Failed to write event to CSV: {e}")
-    
-    def log_position_to_csv(self, namespace: str, lat: float, lon: float, alt: float, 
+            self._csv.disable()
+
+    def log_position_to_csv(self, namespace: str, lat: float, lon: float, alt: float,
                             heading: float = 0.0, battery: float = 0.0):
         """Log a position update to the CSV file."""
-        if not self._csv_logging_enabled or not self._csv_positions_file:
-            return
-        try:
-            state = ""
-            if namespace in self.drone_missions:
-                state = self.drone_missions[namespace].state.name
-            
-            with open(self._csv_positions_file, 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    time.time(),
-                    datetime.now().isoformat(),
-                    namespace,
-                    f"{lat:.8f}",
-                    f"{lon:.8f}",
-                    f"{alt:.2f}",
-                    f"{heading:.1f}",
-                    f"{battery:.1f}",
-                    state
-                ])
-        except Exception as e:
-            logger.error(f"Failed to write position to CSV: {e}")
-    
+        state = ""
+        if namespace in self.drone_missions:
+            state = self.drone_missions[namespace].state.name
+        self._csv.write_position(namespace, lat, lon, alt, heading, battery, state)
+
     def get_csv_log_files(self) -> Dict[str, str]:
         """Get paths to current CSV log files."""
-        return {
-            'commands': self._csv_commands_file,
-            'events': self._csv_events_file,
-            'positions': self._csv_positions_file,
-            'directory': self._csv_log_dir
-        }
+        return self._csv.get_files()
     
     # Command property wrappers that add logging
     @property
@@ -2287,7 +2179,7 @@ class MissionController:
         state = ""
         if namespace in self.drone_missions:
             state = self.drone_missions[namespace].state.name
-        self._write_csv_event(namespace, state, event)
+        self._csv.write_event(namespace, state, event)
     
     def _sync_gimbal_pitch(self, namespace: str):
         """
