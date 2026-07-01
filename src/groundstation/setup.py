@@ -23,7 +23,6 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            'groundstation_node = groundstation.gs:main',
             'perpetual_monitor_node = groundstation.perpetual_monitor_gui:main'
         ],
     },

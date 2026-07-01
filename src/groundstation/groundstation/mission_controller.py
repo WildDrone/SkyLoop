@@ -13,171 +13,18 @@ import threading
 import csv
 import os
 from datetime import datetime
-from enum import Enum, auto
-from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable, Tuple
 import logging
+
+from groundstation import navigation
+from groundstation.models import (
+    MissionState, RelayState, MissionMode,
+    DroneMissionStatus, RelayMissionConfig,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-class MissionState(Enum):
-    """Mission state machine states."""
-    IDLE = auto()
-    SETTING_RTH_ALTITUDE = auto()
-    TAKING_OFF = auto()
-    CLIMBING_TO_ALTITUDE = auto()
-    TRANSIT_TO_MONITORING = auto()
-    APPROACHING_POINT = auto()  # Within video trigger distance
-    MONITORING = auto()
-    WAITING_FOR_RELAY = auto()  # Drone is waiting for replacement to arrive
-    CAMERA_SYNC = auto()  # Drone performing 360° yaw for video synchronization
-    RETURNING_HOME = auto()
-    COMPLETED = auto()
-    ABORTED = auto()
-    ERROR = auto()
-
-
-class RelayState(Enum):
-    """Relay mission state."""
-    INACTIVE = auto()
-    ACTIVE = auto()
-    TRANSITIONING = auto()
-    PAUSED = auto()
-    STOPPED = auto()
-
-
-class MissionMode(Enum):
-    """Mission flight mode."""
-    MONITORING_POINT = auto()  # Fly to defined monitoring point
-    FREE_FLIGHT = auto()  # Pilot manually controls after reaching altitude
-
-
-@dataclass
-class MissionWaypoint:
-    """A waypoint in the mission."""
-    latitude: float
-    longitude: float
-    altitude: float
-    action: str = "goto"  # goto, hover, record_start, record_stop
-    reached: bool = False
-
-
-@dataclass
-class DroneMissionStatus:
-    """Status of a single drone's mission."""
-    namespace: str
-    state: MissionState = MissionState.IDLE
-    assigned_altitude: float = 50.0
-    target_heading: float = 0.0  # Target heading when reaching monitoring point
-    
-    # Current target position (for trajectory re-evaluation during transit)
-    target_lat: float = 0.0
-    target_lon: float = 0.0
-    target_alt: float = 0.0
-    
-    # Timing
-    mission_start_time: float = 0.0
-    transit_start_time: float = 0.0
-    monitoring_start_time: float = 0.0
-    rth_start_time: float = 0.0
-    
-    # Travel time tracking
-    estimated_travel_time: float = 0.0
-    actual_travel_time: float = 0.0
-    actual_rth_time: float = 0.0
-    
-    # Video recording
-    video_trigger_distance: float = 50.0
-    video_started: bool = False
-    
-    # Relay handoff - drone namespace to replace when this drone arrives at monitoring point
-    replacing_drone: str = ""
-    
-    # Relay handoff target - snapshot of the drone being replaced at launch time
-    # Used to fly to where the old drone was instead of the monitoring point
-    relay_target_lat: float = 0.0
-    relay_target_lon: float = 0.0
-    relay_target_heading: float = 0.0
-    
-    # Camera sync tracking (360° yaw for video synchronization)
-    camera_sync_start_time: float = 0.0
-    camera_sync_yaw_started: bool = False
-    camera_sync_yaw_phase2_started: bool = False  # Second half of 360° rotation
-    camera_sync_yaw_completed: bool = False
-    camera_sync_initial_heading: float = 0.0
-    camera_sync_next_state: str = "RTH"  # "RTH" or "MONITORING" - what to do after spin
-    camera_sync_partner_drone: str = ""  # The OTHER drone that should RTH after spin completes
-    camera_sync_top_drone_ns: str = ""  # The TOP (higher) drone namespace during sync
-    camera_sync_top_drone_previous_gimbal: float = 0.0  # Previous gimbal pitch to restore after sync
-    camera_sync_old_drone_gimbal: float = 0.0  # Old monitoring drone's gimbal pitch to transfer to new drone
-    camera_sync_new_drone_ns: str = ""  # The NEW drone that will continue monitoring after sync
-    
-    # Non-blocking state machine timers (timestamps)
-    state_entry_time: float = 0.0  # When current state was entered
-    rth_altitude_cmd_count: int = 0  # Number of RTH altitude commands sent
-    rth_altitude_last_cmd_time: float = 0.0  # Time of last RTH altitude command
-    takeoff_cmd_sent: bool = False  # Whether takeoff command was sent
-    takeoff_second_cmd_sent: bool = False  # Whether second takeoff command was sent
-    climb_wait_started: bool = False  # Whether post-climb wait has started
-    
-    # Logging timers (to avoid spamming logs)
-    last_alt_log_time: float = 0.0
-    last_transit_log_time: float = 0.0
-    last_approach_log_time: float = 0.0
-    
-    # Climb time tracking (for Free Flight dynamic travel estimation)
-    climb_start_time: float = 0.0  # When climb started (after takeoff wait)
-    actual_climb_time: float = 0.0  # Measured climb time for this drone
-    
-    # Transit tracking (for Free Flight dynamic travel estimation)
-    horizontal_transit_start_time: float = 0.0  # When horizontal transit started (after climb)
-    horizontal_transit_start_lat: float = 0.0  # Position when transit started
-    horizontal_transit_start_lon: float = 0.0
-    actual_horizontal_transit_time: float = 0.0  # Measured horizontal transit time
-    actual_horizontal_transit_distance: float = 0.0  # Measured horizontal transit distance
-    
-    # Error handling
-    error_message: str = ""
-    retry_count: int = 0
-
-@dataclass 
-class RelayMissionConfig:
-    """Configuration for relay mission."""
-    monitoring_lat: float = 0.0
-    monitoring_lon: float = 0.0
-    monitoring_alt: float = 50.0
-    monitoring_heading: float = 0.0  # Target heading/yaw at monitoring point (degrees)
-    
-    # Mission mode
-    mission_mode: MissionMode = MissionMode.MONITORING_POINT
-    
-    base_rth_altitude: float = 50.0
-    altitude_separation: float = 15.0
-    video_trigger_distance: float = 50.0
-    
-    # Safety parameters
-    safety_buffer_seconds: float = 60.0
-    min_battery_to_launch: float = 30.0
-    min_satellites: int = 8
-    max_retry_count: int = 3
-    min_vertical_separation: float = 5.0  # meters - minimum safe altitude difference
-    
-    # Camera sync (360° yaw rotation during relay handoff)
-    camera_sync_enabled: bool = True  # If False, skip 360° rotation but keep 10s waits
-    
-    # Timing
-    preflight_wait_seconds: float = 3.0
-    altitude_tolerance: float = 2.0  # meters
-    position_tolerance: float = 5.0  # meters
-    
-    # Robustness parameters
-    telemetry_timeout_seconds: float = 5.0  # Consider disconnected if no telemetry
-    emergency_battery_threshold: float = 15.0  # Force RTH
-    max_distance_from_home: float = 5000.0  # meters, max allowed distance
-    watchdog_interval: float = 1.0  # seconds between watchdog checks
 
 
 class MissionController:
@@ -191,8 +38,8 @@ class MissionController:
     - Travel time estimation
     """
     
-    EARTH_RADIUS = 6371000  # meters
-    
+    EARTH_RADIUS = navigation.EARTH_RADIUS
+
     def __init__(self):
         self.config = RelayMissionConfig()
         self.relay_state = RelayState.INACTIVE
@@ -668,91 +515,50 @@ class MissionController:
     # ========================================================================
     
     def haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate great-circle distance between two points in meters."""
-        lat1_rad = math.radians(lat1)
-        lat2_rad = math.radians(lat2)
-        delta_lat = math.radians(lat2 - lat1)
-        delta_lon = math.radians(lon2 - lon1)
-        
-        a = math.sin(delta_lat / 2) ** 2 + \
-            math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        
-        return self.EARTH_RADIUS * c
-    
+        """Great-circle distance between two points in meters."""
+        return navigation.haversine_distance(lat1, lon1, lat2, lon2)
+
     def calculate_bearing(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate bearing from point 1 to point 2 in degrees."""
-        lat1_rad = math.radians(lat1)
-        lat2_rad = math.radians(lat2)
-        delta_lon = math.radians(lon2 - lon1)
-        
-        x = math.sin(delta_lon) * math.cos(lat2_rad)
-        y = math.cos(lat1_rad) * math.sin(lat2_rad) - \
-            math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon)
-        
-        bearing = math.atan2(x, y)
-        return (math.degrees(bearing) + 360) % 360
-    
-    # Speed constants
-    VERTICAL_SPEED = 4.0      # m/s - DJI climb/descent rate
-    HORIZONTAL_SPEED_PID = 15.0     # m/s - PID control mode
-    HORIZONTAL_SPEED_NATIVE = 15.0  # m/s - DJI native trajectory mode
-    
-    def estimate_travel_time(self, distance: float, altitude: float = None, 
+        """Bearing from point 1 to point 2 in degrees."""
+        return navigation.calculate_bearing(lat1, lon1, lat2, lon2)
+
+    # Speed constants (single-sourced from navigation).
+    VERTICAL_SPEED = navigation.VERTICAL_SPEED
+    HORIZONTAL_SPEED_PID = navigation.HORIZONTAL_SPEED_PID
+    HORIZONTAL_SPEED_NATIVE = navigation.HORIZONTAL_SPEED_NATIVE
+
+    # Ground holds baked into the estimate, matching the flight sequence:
+    # 5s after takeoff before climbing, 5s after reaching altitude before transit.
+    WAIT_AFTER_TAKEOFF = 5.0
+    WAIT_AFTER_CLIMB = 5.0
+
+    def estimate_travel_time(self, distance: float, altitude: float = None,
                              horizontal_speed: float = None, vertical_speed: float = None) -> float:
+        """Estimate travel time in seconds, including climb and ground holds.
+
+        Resolves unspecified speeds/altitude from UI config and navigation mode,
+        then defers the arithmetic to :func:`navigation.estimate_travel_time`.
         """
-        Estimate travel time in seconds, including climb time and wait times.
-        
-        This estimation matches the actual flight sequence:
-        1. Wait 5s after takeoff before climbing
-        2. Climb to altitude
-        3. Wait 5s after reaching altitude before transit
-        4. Horizontal transit to monitoring point
-        
-        Args:
-            distance: Horizontal distance in meters
-            altitude: Target altitude in meters (uses config monitoring_alt if None)
-            horizontal_speed: Horizontal flight speed in m/s 
-                              (default: 15 m/s for PID mode, 15 m/s for DJI native)
-            vertical_speed: Vertical climb speed in m/s (default 4 m/s)
-        
-        Returns:
-            Estimated travel time in seconds
-        """
-        # Wait times matching actual implementation
-        WAIT_AFTER_TAKEOFF = 5.0  # time.sleep(5.0) in TAKING_OFF state
-        WAIT_AFTER_CLIMB = 5.0    # time.sleep(5.0) in CLIMBING_TO_ALTITUDE state
-        
-        # Use defaults if not specified
         if vertical_speed is None:
             vertical_speed = self.VERTICAL_SPEED
         if horizontal_speed is None:
-            # First try to get speed from UI configuration
-            if self.get_configured_speed:
-                horizontal_speed = self.get_configured_speed()
-            else:
-                # Fallback to defaults based on navigation mode
-                if self.use_dji_native:
-                    horizontal_speed = self.HORIZONTAL_SPEED_NATIVE
-                else:
-                    horizontal_speed = self.HORIZONTAL_SPEED_PID
-        
-        if horizontal_speed <= 0:
-            return float('inf')
-        
-        # Use monitoring altitude from config if not specified
+            horizontal_speed = self._resolve_horizontal_speed()
         if altitude is None:
             altitude = self.config.monitoring_alt if self.config.monitoring_alt > 0 else 50.0
-        
-        # Time to climb to altitude (from ground)
-        climb_time = altitude / vertical_speed if vertical_speed > 0 else 0
-        
-        # Time for horizontal translation
-        horizontal_time = distance / horizontal_speed
-        
-        # Total travel time = waits + climb + horizontal (sequential)
-        # Matches actual flight sequence for accurate first-rotation estimation
-        return WAIT_AFTER_TAKEOFF + climb_time + WAIT_AFTER_CLIMB + horizontal_time
+
+        return navigation.estimate_travel_time(
+            distance, altitude, horizontal_speed, vertical_speed,
+            wait_after_takeoff=self.WAIT_AFTER_TAKEOFF,
+            wait_after_climb=self.WAIT_AFTER_CLIMB,
+        )
+
+    def _resolve_horizontal_speed(self) -> float:
+        """Configured transit speed, else the default for the active nav mode."""
+        if self.get_configured_speed:
+            return self.get_configured_speed()
+        if self.use_dji_native:
+            return self.HORIZONTAL_SPEED_NATIVE
+        return self.HORIZONTAL_SPEED_PID
     
     def get_average_travel_time(self) -> float:
         """Get average travel time from history."""
@@ -1072,20 +878,6 @@ class MissionController:
                 self._emit_event(ns, f"Mission aborted - RTH at {mission.assigned_altitude}m")
         
         logger.info("Mission stopped - all drones returning home")
-    
-    def abort_drone_mission(self, namespace: str):
-        """Abort mission for a specific drone."""
-        if namespace in self.drone_missions:
-            mission = self.drone_missions[namespace]
-            
-            if mission.video_started and self.cmd_stop_recording:
-                self.cmd_stop_recording(namespace)
-            
-            if self.cmd_abort:
-                self.cmd_abort(namespace)
-            
-            mission.state = MissionState.ABORTED
-            self._emit_event(namespace, "Mission aborted")
     
     def abort_drone_mission(self, namespace: str, reason: str = "Mission aborted"):
         """Abort mission for a specific drone with custom reason."""
