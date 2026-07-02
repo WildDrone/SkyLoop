@@ -1,8 +1,7 @@
 """Per-session CSV logging of mission commands, events, and positions.
 
-Extracted from ``MissionController`` so the state machine no longer owns file
-I/O. Disabled by default; call :meth:`MissionCsvLogger.enable` to start a
-session. Behaviour is unchanged from the original inline implementation.
+Writes mission telemetry to timestamped CSV files, one file per session.
+Disabled by default; call :meth:`MissionCsvLogger.enable` to start a session.
 """
 
 import csv

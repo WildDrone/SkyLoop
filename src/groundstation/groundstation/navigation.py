@@ -1,8 +1,8 @@
 """Pure navigation math: great-circle geometry and relay timing.
 
-Extracted from ``mission_controller`` and ``perpetual_monitor`` where the same
-formulas were duplicated. All functions are pure (no I/O, no ROS, no state) so
-they are cheap to unit-test; see ``test_navigation.py``.
+Great-circle distance and bearing, waypoint projection, and flight-time
+estimates for relay scheduling. All functions are pure (no I/O, no ROS, no
+state).
 """
 
 import math

@@ -1,8 +1,7 @@
 """HTML/JS templates for the video pages.
 
-The HTML overlay is built inline; the two JavaScript blocks live as real
-.js files under static/ and are loaded here with __PLACEHOLDER__ substitution
-(byte-identical to the previous inline f-strings).
+Builds the HTML overlay inline and loads the two JavaScript blocks from real
+.js files under static/ via __PLACEHOLDER__ substitution.
 """
 
 import functools

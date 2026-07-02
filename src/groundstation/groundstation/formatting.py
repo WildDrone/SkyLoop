@@ -1,7 +1,7 @@
 """Small pure formatting helpers shared by the GUI.
 
-Extracted to remove copy-pasted inline formatting. All functions are pure and
-byte-for-byte reproduce the expressions they replace (see test_formatting.py).
+Duration formatting (``M:SS`` and ``HH:MM:SS``) and battery-level colour
+mapping used across the monitoring interface.
 """
 
 

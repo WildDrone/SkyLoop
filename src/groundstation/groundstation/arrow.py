@@ -1,8 +1,7 @@
 """Leaflet map arrow marker for drone position display.
 
-Extracted from ``perpetual_monitor_gui`` (behaviour unchanged). Renders and
-updates a directional arrow on a NiceGUI Leaflet map via the JavaScript helpers
-in ``static/arrows.js``.
+Renders and updates a directional arrow on a NiceGUI Leaflet map via the
+JavaScript helpers in ``static/arrows.js``.
 """
 
 from nicegui import ui

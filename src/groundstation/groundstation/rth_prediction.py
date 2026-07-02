@@ -1,9 +1,8 @@
 """Return-to-home (RTH) time prediction from battery-drain telemetry.
 
-Linear regression over battery history to predict when DJI will trigger RTH.
-Extracted verbatim from ``perpetual_monitor`` (behaviour unchanged); the only
-edits are moving the numpy/time/csv/os imports to module level instead of the
-former ``self.np``/``self._time`` class-attribute pattern.
+Fits a linear regression over battery history to predict when the DJI drone
+will trigger its automatic return-to-home, so relays can be scheduled ahead of
+time.
 """
 
 import csv
