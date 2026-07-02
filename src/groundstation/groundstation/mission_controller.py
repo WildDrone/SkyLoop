@@ -1369,95 +1369,100 @@ class MissionController:
 
         # Phase 3: Wait 10 seconds after yaw, then transition to next state (RTH or MONITORING)
         else:
-            phase3_wait = 10.0
-            if elapsed >= phase3_wait:
-                self._emit_event(namespace, "360° yaw wait complete")
+            self._camera_sync_finish(namespace, mission, elapsed)
 
-                if mission.camera_sync_next_state == "MONITORING":
-                    # This drone continues monitoring (it was the arriving lower drone)
-                    mission.state = MissionState.MONITORING
-                    mission.monitoring_start_time = time.time()
-                    mission.state_entry_time = 0.0  # Reset for debug mode
 
-                    # Transfer old drone's gimbal pitch to the new monitoring drone
-                    if self.cmd_set_gimbal_pitch and mission.camera_sync_old_drone_gimbal != 0.0:
-                        self.cmd_set_gimbal_pitch(namespace, mission.camera_sync_old_drone_gimbal)
-                        self._emit_event(namespace, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
+    def _camera_sync_finish(self, namespace: str, mission: DroneMissionStatus, elapsed: float):
+        """Phase 3: after the post-yaw hold, transition to MONITORING or RTH."""
+        phase3_wait = 10.0
+        if elapsed >= phase3_wait:
+            self._emit_event(namespace, "360° yaw wait complete")
 
-                    # In Free Flight mode, pilot now has control
-                    if self.mission_mode == MissionMode.FREE_FLIGHT:
-                        self._update_status(namespace, mission.state, "FREE FLIGHT: Camera sync complete, pilot has control")
-                        self._emit_event(namespace, "FREE FLIGHT: Camera sync complete - pilot now has control")
-                    else:
-                        self._update_status(namespace, mission.state, "Monitoring after camera sync")
-                        self._emit_event(namespace, "Camera sync complete - now monitoring")
+            if mission.camera_sync_next_state == "MONITORING":
+                # This drone continues monitoring (it was the arriving lower drone)
+                mission.state = MissionState.MONITORING
+                mission.monitoring_start_time = time.time()
+                mission.state_entry_time = 0.0  # Reset for debug mode
 
-                    # Now send the partner drone (old/departing drone) to RTH
-                    if mission.camera_sync_partner_drone:
-                        partner_ns = mission.camera_sync_partner_drone
-                        if partner_ns in self.drone_missions:
-                            partner_mission = self.drone_missions[partner_ns]
-                            self._emit_event(partner_ns, "Spin complete - now departing")
+                # Transfer old drone's gimbal pitch to the new monitoring drone
+                if self.cmd_set_gimbal_pitch and mission.camera_sync_old_drone_gimbal != 0.0:
+                    self.cmd_set_gimbal_pitch(namespace, mission.camera_sync_old_drone_gimbal)
+                    self._emit_event(namespace, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
 
-                            # Stop recording on partner
-                            if partner_mission.video_started and self.cmd_stop_recording:
-                                self.cmd_stop_recording(partner_ns)
-                                self._emit_event(partner_ns, "Recording stopped")
-
-                            # Set RTH altitude
-                            if self.cmd_set_rth_altitude:
-                                self._emit_event(partner_ns, f"Setting RTH altitude: {partner_mission.assigned_altitude}m")
-                                self.cmd_set_rth_altitude(partner_ns, partner_mission.assigned_altitude)
-                                time.sleep(0.5)
-
-                            # Command RTH
-                            if self.cmd_rth:
-                                self._emit_event(partner_ns, f"Commanding RTH at {partner_mission.assigned_altitude}m")
-                                self.cmd_rth(partner_ns)
-
-                            partner_mission.state = MissionState.RETURNING_HOME
-                            partner_mission.state_entry_time = 0.0  # Reset for debug mode
-                            partner_mission.rth_start_time = time.time()
-                            self._update_status(partner_ns, partner_mission.state, "Returning home after relay handoff")
-
-                            # Clear manual swap mode - swap is complete
-                            self._manual_swap_active = False
-
-                        # Clear the partner reference
-                        mission.camera_sync_partner_drone = ""
+                # In Free Flight mode, pilot now has control
+                if self.mission_mode == MissionMode.FREE_FLIGHT:
+                    self._update_status(namespace, mission.state, "FREE FLIGHT: Camera sync complete, pilot has control")
+                    self._emit_event(namespace, "FREE FLIGHT: Camera sync complete - pilot now has control")
                 else:
-                    # This drone goes to RTH (default, it was the departing drone)
-                    # Transfer old drone's gimbal pitch to the new monitoring drone
-                    if mission.camera_sync_new_drone_ns and self.cmd_set_gimbal_pitch:
-                        new_drone_ns = mission.camera_sync_new_drone_ns
-                        if mission.camera_sync_old_drone_gimbal != 0.0:
-                            self.cmd_set_gimbal_pitch(new_drone_ns, mission.camera_sync_old_drone_gimbal)
-                            self._emit_event(new_drone_ns, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
+                    self._update_status(namespace, mission.state, "Monitoring after camera sync")
+                    self._emit_event(namespace, "Camera sync complete - now monitoring")
 
-                    # Stop recording
-                    if mission.video_started and self.cmd_stop_recording:
-                        self.cmd_stop_recording(namespace)
-                        self._emit_event(namespace, "Recording stopped")
+                # Now send the partner drone (old/departing drone) to RTH
+                if mission.camera_sync_partner_drone:
+                    partner_ns = mission.camera_sync_partner_drone
+                    if partner_ns in self.drone_missions:
+                        partner_mission = self.drone_missions[partner_ns]
+                        self._emit_event(partner_ns, "Spin complete - now departing")
 
-                    # Re-set RTH altitude before RTH command
-                    if self.cmd_set_rth_altitude:
-                        self._emit_event(namespace, f"Confirming RTH altitude: {mission.assigned_altitude}m")
-                        self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
-                        time.sleep(0.5)
+                        # Stop recording on partner
+                        if partner_mission.video_started and self.cmd_stop_recording:
+                            self.cmd_stop_recording(partner_ns)
+                            self._emit_event(partner_ns, "Recording stopped")
 
-                    # Command RTH
-                    if self.cmd_rth:
-                        self._emit_event(namespace, f"Commanding RTH at {mission.assigned_altitude}m")
-                        self.cmd_rth(namespace)
+                        # Set RTH altitude
+                        if self.cmd_set_rth_altitude:
+                            self._emit_event(partner_ns, f"Setting RTH altitude: {partner_mission.assigned_altitude}m")
+                            self.cmd_set_rth_altitude(partner_ns, partner_mission.assigned_altitude)
+                            time.sleep(0.5)
 
-                    mission.state = MissionState.RETURNING_HOME
-                    mission.state_entry_time = 0.0  # Reset for debug mode
-                    mission.rth_start_time = time.time()
-                    self._update_status(namespace, mission.state, "Returning home after camera sync")
-                    self._emit_event(namespace, "Camera sync complete - returning home")
+                        # Command RTH
+                        if self.cmd_rth:
+                            self._emit_event(partner_ns, f"Commanding RTH at {partner_mission.assigned_altitude}m")
+                            self.cmd_rth(partner_ns)
 
-                    # Clear manual swap mode - swap is complete
-                    self._manual_swap_active = False
+                        partner_mission.state = MissionState.RETURNING_HOME
+                        partner_mission.state_entry_time = 0.0  # Reset for debug mode
+                        partner_mission.rth_start_time = time.time()
+                        self._update_status(partner_ns, partner_mission.state, "Returning home after relay handoff")
+
+                        # Clear manual swap mode - swap is complete
+                        self._manual_swap_active = False
+
+                    # Clear the partner reference
+                    mission.camera_sync_partner_drone = ""
+            else:
+                # This drone goes to RTH (default, it was the departing drone)
+                # Transfer old drone's gimbal pitch to the new monitoring drone
+                if mission.camera_sync_new_drone_ns and self.cmd_set_gimbal_pitch:
+                    new_drone_ns = mission.camera_sync_new_drone_ns
+                    if mission.camera_sync_old_drone_gimbal != 0.0:
+                        self.cmd_set_gimbal_pitch(new_drone_ns, mission.camera_sync_old_drone_gimbal)
+                        self._emit_event(new_drone_ns, f"Gimbal pitch inherited from previous drone: {mission.camera_sync_old_drone_gimbal:.1f}°")
+
+                # Stop recording
+                if mission.video_started and self.cmd_stop_recording:
+                    self.cmd_stop_recording(namespace)
+                    self._emit_event(namespace, "Recording stopped")
+
+                # Re-set RTH altitude before RTH command
+                if self.cmd_set_rth_altitude:
+                    self._emit_event(namespace, f"Confirming RTH altitude: {mission.assigned_altitude}m")
+                    self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
+                    time.sleep(0.5)
+
+                # Command RTH
+                if self.cmd_rth:
+                    self._emit_event(namespace, f"Commanding RTH at {mission.assigned_altitude}m")
+                    self.cmd_rth(namespace)
+
+                mission.state = MissionState.RETURNING_HOME
+                mission.state_entry_time = 0.0  # Reset for debug mode
+                mission.rth_start_time = time.time()
+                self._update_status(namespace, mission.state, "Returning home after camera sync")
+                self._emit_event(namespace, "Camera sync complete - returning home")
+
+                # Clear manual swap mode - swap is complete
+                self._manual_swap_active = False
 
     def _start_transit(self, namespace: str, mission: DroneMissionStatus):
         """Start transit to monitoring point (or current monitoring drone's position for relay)."""
@@ -1953,23 +1958,9 @@ class MissionController:
             self._takeoff_cancelled = True
             self._emit_event(self._takeoff_confirmation_shown_for_drone, "Takeoff cancelled by user")
     
-    def _check_vertical_separation(self):
-        """
-        Check vertical separation between drones during relay operations.
-        Alert if two drones are within 5 meters vertically (critical safety issue).
-        
-        This is called during active relay operations when drones are in transit.
-        """
-        # Only check every 2 seconds to avoid spamming
-        now = time.time()
-        if now - self._last_vertical_separation_check < 2.0:
-            return
-        self._last_vertical_separation_check = now
-        
-        # Check if vertical separation is enabled
-        if not self._vertical_separation_enabled:
-            return
-        
+
+    def _collect_airborne_drones(self):
+        """Return [(namespace, altitude, state)] for drones in comparable flight states."""
         # Get all drones that are actually airborne and in comparable flight states
         # Exclude states where drone is on the ground or climbing (at different altitudes by design):
         # - IDLE: not started
@@ -2005,7 +1996,13 @@ class MissionController:
                 else:
                     logger.warning(f"No altitude callback registered!")
                 airborne_drones.append((ns, altitude, mission.state))
-        
+        return airborne_drones
+
+
+    def _scan_vertical_violations(self, airborne_drones):
+        """Scan drone pairs; emit an alert on the first vertical-separation breach.
+
+        Returns (violation_found, violation_drones)."""
         # Check all pairs for vertical separation
         MIN_VERTICAL_SEPARATION = 5.0  # meters
         
@@ -2037,6 +2034,28 @@ class MissionController:
                     break  # Only handle one violation at a time
             if violation_found:
                 break
+        return violation_found, violation_drones
+
+    def _check_vertical_separation(self):
+        """
+        Check vertical separation between drones during relay operations.
+        Alert if two drones are within 5 meters vertically (critical safety issue).
+        
+        This is called during active relay operations when drones are in transit.
+        """
+        # Only check every 2 seconds to avoid spamming
+        now = time.time()
+        if now - self._last_vertical_separation_check < 2.0:
+            return
+        self._last_vertical_separation_check = now
+        
+        # Check if vertical separation is enabled
+        if not self._vertical_separation_enabled:
+            return
+        
+        airborne_drones = self._collect_airborne_drones()
+        
+        violation_found, violation_drones = self._scan_vertical_violations(airborne_drones)
         
         # Handle countdown logic
         current_time = time.time()
@@ -2370,6 +2389,18 @@ class MissionController:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # Send initial commands for the new state to kick off the phase
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        self._send_state_entry_commands(namespace, mission, new_state)
+
+        self._update_status(namespace, new_state, f"Manually changed to {new_state.name}")
+
+        # Log the change prominently
+        self._emit_event(namespace, f"⚠️ MANUAL STATE CHANGE: {old_state.name} → {new_state.name}")
+
+        return True, f"State changed: {old_state.name} → {new_state.name}"
+    
+
+    def _send_state_entry_commands(self, namespace: str, mission: DroneMissionStatus, new_state: MissionState):
+        """Send the initial command(s) that kick off the given state."""
         if new_state == MissionState.SETTING_RTH_ALTITUDE:
             if self.cmd_set_rth_altitude:
                 self.cmd_set_rth_altitude(namespace, mission.assigned_altitude)
@@ -2438,13 +2469,6 @@ class MissionController:
                 self.cmd_abort(namespace)
                 self._emit_event(namespace, "Commanded: Abort mission")
 
-        self._update_status(namespace, new_state, f"Manually changed to {new_state.name}")
-
-        # Log the change prominently
-        self._emit_event(namespace, f"⚠️ MANUAL STATE CHANGE: {old_state.name} → {new_state.name}")
-
-        return True, f"State changed: {old_state.name} → {new_state.name}"
-    
     def calculate_drones_needed(self, mission_duration_hours: float = 1.0, battery_swap_time: float = 180.0) -> Tuple[int, int, float, float, float, bool]:
         """
         Calculate minimum drones needed for continuous coverage.
