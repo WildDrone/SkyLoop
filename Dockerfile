@@ -45,13 +45,13 @@ RUN apt-get update && \
 
 # Build the workspace
 RUN . /opt/ros/humble/setup.sh && \
-    colcon build --symlink-install
+    colcon build
 
 # Source the workspace automatically
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
     echo "source /SkyLoop/install/setup.bash" >> ~/.bashrc && \
-    echo "alias build='cd /SkyLoop && colcon build --symlink-install && source install/setup.bash'" >> ~/.bashrc && \
-    echo "alias build-pkg='cd /SkyLoop && colcon build --symlink-install --packages-select'" >> ~/.bashrc
+    echo "alias build='cd /SkyLoop && colcon build && source install/setup.bash'" >> ~/.bashrc && \
+    echo "alias build-pkg='cd /SkyLoop && colcon build --packages-select'" >> ~/.bashrc
 
 # Copy and set entrypoint
 COPY entrypoint.sh /entrypoint.sh
