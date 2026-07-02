@@ -1722,7 +1722,15 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _setup_event_subscriptions(self):
         """Set up event subscriptions for UI updates."""
-        
+        self._subscribe_telemetry()
+        self._subscribe_rth_predictor()
+        self._subscribe_drone_state()
+        self._subscribe_connection()
+        self._subscribe_mission()
+        self._subscribe_log()
+
+    def _subscribe_telemetry(self):
+        """Telemetry updates (position, heading, battery, speed, etc.)."""
         @self.drone_position_update.subscribe
         def on_position(data: dict):
             ns = data['namespace']
@@ -1849,6 +1857,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self._last_flight_mode = {}
                     self._last_flight_mode[ns] = mode
         
+
+    def _subscribe_rth_predictor(self):
+        """RTH battery-prediction panel updates."""
         @self.rth_predictor_update.subscribe
         def on_rth_predictor(data: dict):
             ns = data['namespace']
@@ -1903,6 +1914,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             if 'rth_data_points' in labels:
                 labels['rth_data_points'].text = f"{data_points} pts"
         
+
+    def _subscribe_drone_state(self):
+        """Drone operational-state changes."""
         @self.drone_state_update.subscribe
         def on_state(data: dict):
             ns = data['namespace']
@@ -1959,6 +1973,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Update state machine display icons (if they exist)
             self._update_state_icons(ns)
         
+
+    def _subscribe_connection(self):
+        """Drone connect / disconnect events."""
         @self.drone_connected_event.subscribe
         def on_connected(data: dict):
             self._refresh_drone_list()
@@ -2000,6 +2017,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 del self.drone_is_flying[ns]
             self._build_state_machine_display()  # Update state machine display
         
+
+    def _subscribe_mission(self):
+        """Monitoring point and relay countdown updates."""
         @self.monitoring_point_update.subscribe
         def on_monitoring_point(data: dict):
             if data.get('clear'):
@@ -2163,6 +2183,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 else:
                     self.reconnect_label.text = ""
         
+
+    def _subscribe_log(self):
+        """Event-log messages."""
         @self.log_event.subscribe
         def on_log(data: dict):
             message = data['message']
