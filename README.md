@@ -31,7 +31,7 @@ A single DJI drone gives roughly 20–40 minutes of flight. SkyLoop chains sever
 <p align="center">
   <img src="media/mission_gantt.svg" alt="Relay mission Gantt chart" width="720"/>
   <br/>
-  <em>Gantt chart of a two-drone relay mission: overlap windows ensure unbroken coverage</em>
+  <em>Gantt chart example from real-world flights of a two-drone relay mission: overlap windows ensure unbroken coverage</em>
 </p>
 
 
