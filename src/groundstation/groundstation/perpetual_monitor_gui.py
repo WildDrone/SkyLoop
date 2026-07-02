@@ -63,13 +63,14 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def __init__(self):
         super().__init__()
-        
-        # Default drone IPs to auto-connect at startup
-        self.AUTO_CONNECT_DRONE_IPS = [
-            ('10.142.188.57', 'drone_1'),
-            ('10.142.188.117', 'drone_2'),
-        ]
-        
+        self._init_events()
+        self._init_state()
+        self._register_mission_callbacks()
+        self._auto_connect_on_startup()
+        self._register_pages()
+
+    def _init_events(self):
+        """Create NiceGUI Events for thread-safe UI updates."""
         # NiceGUI Events for thread-safe UI updates
         self.drone_position_update = Event()
         self.drone_heading_update = Event()
@@ -86,7 +87,15 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.relay_countdown_update = Event()
         self.rth_predictor_update = Event()  # RTH predictor info
         self.log_event = Event()
-        
+
+    def _init_state(self):
+        """Initialize UI element references and mission/runtime state."""
+        # Default drone IPs to auto-connect at startup
+        self.AUTO_CONNECT_DRONE_IPS = [
+            ('10.142.188.57', 'drone_1'),
+            ('10.142.188.117', 'drone_2'),
+        ]
+
         # UI element references (populated when page loads)
         self.map = None
         self.drone_cards: Dict[str, ui.card] = {}
@@ -257,7 +266,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Vertical separation countdown state
         self._vertical_separation_countdown_active = False
-        
+
+    def _register_mission_callbacks(self):
+        """Wire MissionController callbacks to GUI handlers."""
         # Register takeoff confirmation callback
         self.mission_controller.on_takeoff_confirmation_request = self._on_takeoff_confirmation_request
         
@@ -274,10 +285,9 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Register drone altitude callback for separation check  
         self.mission_controller.get_drone_altitude = self._get_drone_altitude
-        
-        # Auto-connect drones at startup (in background thread)
-        self._auto_connect_on_startup()
-        
+
+    def _register_pages(self):
+        """Register the NiceGUI page routes."""
         # Define the main page
         @ui.page('/')
         def main_page():
