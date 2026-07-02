@@ -72,7 +72,7 @@ During `CAMERA_SYNC`, the arriving drone performs a 360° yaw rotation so the ou
 
 The live video feed can run an in-browser YOLOv8 object detector, overlaying bounding boxes and telemetry on the fullscreen stream — useful for spotting and counting animals during a mission without any server-side GPU.
 
-| Zebra herd detection | Volcano / wildfire scene |
+| Zebra herd detection | Volcano scene |
 |---|---|
 | ![Zebra detection](media/mv_zebra.png) | ![Fuego detection](media/mv_fuego.png) |
 
