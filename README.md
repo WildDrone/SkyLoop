@@ -12,27 +12,6 @@
 
 ---
 
-## Table of Contents
-
-- [Features](#features)
-- [How it works](#how-it-works)
-- [Machine vision](#machine-vision)
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [ROS 2 Interface](#ros-2-interface)
-- [Project Structure](#project-structure)
-- [Development](#development)
-- [Testing](#testing)
-- [License](#license)
-- [Maintainers](#maintainers)
-- [Acknowledgements](#acknowledgements)
-
----
-
 ## Features
 
 - **Perpetual relay missions** — multiple drones take turns at a monitoring point; handoffs are scheduled automatically so coverage never lapses.
@@ -52,7 +31,7 @@ A single DJI drone gives roughly 20–40 minutes of flight. SkyLoop chains sever
 <p align="center">
   <img src="media/mission_gantt.svg" alt="Relay mission Gantt chart" width="720"/>
   <br/>
-  <em>Gantt chart of a three-drone relay mission: overlap windows ensure unbroken coverage</em>
+  <em>Gantt chart of a two-drone relay mission: overlap windows ensure unbroken coverage</em>
 </p>
 
 
