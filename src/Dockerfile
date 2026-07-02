@@ -25,7 +25,7 @@ USER $UNAME
 WORKDIR /home/$UNAME
 
 # Create workspace
-WORKDIR /WildPerpetua
+WORKDIR /SkyLoop
 
 # Copy source code (when you add it)
 # COPY src ./src
@@ -45,9 +45,9 @@ RUN . /opt/ros/humble/setup.sh && \
 
 # Source the workspace automatically
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
-    echo "source /WildPerpetua/install/setup.bash" >> ~/.bashrc && \
-    echo "alias build='cd /WildPerpetua && colcon build --symlink-install && source install/setup.bash'" >> ~/.bashrc && \
-    echo "alias build-pkg='cd /WildPerpetua && colcon build --symlink-install --packages-select'" >> ~/.bashrc
+    echo "source /SkyLoop/install/setup.bash" >> ~/.bashrc && \
+    echo "alias build='cd /SkyLoop && colcon build --symlink-install && source install/setup.bash'" >> ~/.bashrc && \
+    echo "alias build-pkg='cd /SkyLoop && colcon build --symlink-install --packages-select'" >> ~/.bashrc
 
 # Default command
 CMD ["/bin/bash"]

@@ -1,4 +1,4 @@
-# Running WildPerpetua in Docker
+# Running SkyLoop in Docker
 
 ## Prerequisites
 - Docker installed on your system
@@ -20,7 +20,7 @@
 
 3. **Access the container:**
    ```bash
-   docker compose exec wildperpetua bash
+   docker compose exec skyloop bash
    ```
 
 4. **Inside the container, you can run ROS2 commands:**
@@ -45,18 +45,18 @@
 
 1. **Build the Docker image:**
    ```bash
-   docker build -t wildperpetua:latest .
+   docker build -t skyloop:latest .
    ```
 
 2. **Run the container:**
    ```bash
    docker run -it --rm \
-     --name wildperpetua_ros2 \
+     --name skyloop_ros2 \
      --network host \
      -e DISPLAY=$DISPLAY \
      -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
      -v $(pwd)/src:/ros2_ws/src \
-     wildperpetua:latest
+     skyloop:latest
    ```
 
 ## Development Workflow
@@ -99,17 +99,17 @@ docker compose logs -f
 
 ### Execute commands in running container:
 ```bash
-docker compose exec wildperpetua ros2 topic list
+docker compose exec skyloop ros2 topic list
 ```
 
 ### Open multiple terminals in the same container:
 ```bash
-docker exec -it wildperpetua_ros2 bash
+docker exec -it skyloop_ros2 bash
 ```
 
 ### Clean up build artifacts:
 ```bash
-docker compose exec wildperpetua bash -c "cd /ros2_ws && rm -rf build install log"
+docker compose exec skyloop bash -c "cd /ros2_ws && rm -rf build install log"
 ```
 
 ## Customization
@@ -142,7 +142,7 @@ If ROS2 nodes can't communicate:
 ### Permission Issues
 If you encounter permission issues:
 ```bash
-docker compose exec wildperpetua chown -R $(id -u):$(id -g) /ros2_ws
+docker compose exec skyloop chown -R $(id -u):$(id -g) /ros2_ws
 ```
 
 ### GUI Not Working

@@ -214,7 +214,7 @@ class MissionController:
 
         Args:
             enabled: Enable CSV logging
-            log_dir: Directory to save CSV files (default: ~/wildperpetua_logs)
+            log_dir: Directory to save CSV files (default: ~/skyloop_logs)
         """
         if enabled:
             self._csv.enable(log_dir)

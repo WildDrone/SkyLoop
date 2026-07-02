@@ -1,5 +1,5 @@
 #!/bin/bash
-# Entrypoint script for WildPerpetua container
+# Entrypoint script for SkyLoop container
 # Checks ROS2 communication setup and guides user if needed
 
 # Colors for output
@@ -10,13 +10,13 @@ NC='\033[0m' # No Color
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║           WildPerpetua ROS2 Container Started                ║${NC}"
+echo -e "${GREEN}║           SkyLoop ROS2 Container Started                ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 # Check if host has run the setup script by testing ROS2 communication
 # We do this by checking if the fastdds.xml is properly mounted
-if [ -f "/WildPerpetua/fastdds.xml" ]; then
+if [ -f "/SkyLoop/fastdds.xml" ]; then
     echo -e "${GREEN}✓${NC} FastDDS configuration loaded"
 else
     echo -e "${RED}✗${NC} FastDDS configuration not found"
@@ -43,8 +43,8 @@ sudo sysctl -w fs.inotify.max_user_watches=524288 > /dev/null 2>&1 || true
 
 # Source ROS2 environment
 source /opt/ros/humble/setup.bash
-if [ -f /WildPerpetua/install/setup.bash ]; then
-    source /WildPerpetua/install/setup.bash
+if [ -f /SkyLoop/install/setup.bash ]; then
+    source /SkyLoop/install/setup.bash
 fi
 
 # Execute the command passed to the container

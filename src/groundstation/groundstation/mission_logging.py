@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class MissionCsvLogger:
     """Writes mission telemetry to timestamped CSV files (one session each)."""
 
-    DEFAULT_LOG_DIR = "~/wildperpetua_logs"
+    DEFAULT_LOG_DIR = "~/skyloop_logs"
 
     def __init__(self, log_dir: str = DEFAULT_LOG_DIR):
         self.log_dir = os.path.expanduser(log_dir)

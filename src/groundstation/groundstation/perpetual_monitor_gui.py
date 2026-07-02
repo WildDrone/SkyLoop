@@ -96,7 +96,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     def _init_state(self):
         """Initialize UI element references and mission/runtime state."""
         # Drone IPs to auto-connect at startup. Override with env var
-        # WILDPERPETUA_AUTO_CONNECT="ip:name,ip:name" (empty disables auto-connect).
+        # SKYLOOP_AUTO_CONNECT="ip:name,ip:name" (empty disables auto-connect).
         self.AUTO_CONNECT_DRONE_IPS = self._auto_connect_ips_from_env([
             ('10.142.188.57', 'drone_1'),
             ('10.142.188.117', 'drone_2'),
@@ -160,7 +160,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # ROS bag recording
         self._rosbag_process = None  # subprocess.Popen for ros2 bag record
         self._rosbag_recording = False
-        self._rosbag_dir = os.environ.get('WILDPERPETUA_ROSBAG_DIR', '/WildPerpetua/src/rosbags')  # Mounted to host's src/rosbags/
+        self._rosbag_dir = os.environ.get('SKYLOOP_ROSBAG_DIR', '/SkyLoop/src/rosbags')  # Mounted to host's src/rosbags/
         
         # Debug console (ROS logs)
         self.debug_mode = False
@@ -214,7 +214,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Video/Telemetry recording state
         self.recording_running: Dict[str, bool] = {}  # {namespace: is_recording}
-        self.recording_dir = os.environ.get('WILDPERPETUA_RECORDING_DIR', '/WildPerpetua/recordings')  # Default recording directory
+        self.recording_dir = os.environ.get('SKYLOOP_RECORDING_DIR', '/SkyLoop/recordings')  # Default recording directory
         self.recording_sessions: Dict[str, dict] = {}  # {namespace: session_data}
         self.recording_timers: Dict[str, object] = {}  # {namespace: ui.timer}
         self.latest_telemetry: Dict[str, dict] = {}  # {namespace: telemetry_data} - latest telemetry for recording
@@ -1444,8 +1444,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     @staticmethod
     def _auto_connect_ips_from_env(default):
-        """Parse WILDPERPETUA_AUTO_CONNECT ("ip:name,ip:name"), else use default."""
-        raw = os.environ.get('WILDPERPETUA_AUTO_CONNECT')
+        """Parse SKYLOOP_AUTO_CONNECT ("ip:name,ip:name"), else use default."""
+        raw = os.environ.get('SKYLOOP_AUTO_CONNECT')
         if raw is None:
             return default
         pairs = []
@@ -1563,7 +1563,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             <script>
                 // Clear browser storage on page load to prevent stale data
                 sessionStorage.clear();
-                localStorage.removeItem('wildperpetua_state');
+                localStorage.removeItem('skyloop_state');
             </script>
         ''')
         
@@ -2618,7 +2618,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         with ui.card().classes('h-full').style('flex: 1.2; min-width: 350px; overflow-y: auto;'):
             with ui.row().classes('items-center gap-3 w-full'):
                 ui.image('/static/logo.png').classes('w-16 h-16')
-                ui.label("WildPerpetua").classes('text-2xl font-bold').style('flex-grow: 1')
+                ui.label("SkyLoop").classes('text-2xl font-bold').style('flex-grow: 1')
                 self.silent_toggle = ui.button(icon='volume_up', on_click=self._toggle_silent_mode).props('flat dense').tooltip('Toggle Silent Mode')
                 ui.button(icon='restart_alt', on_click=self._restart_groundstation).props('flat dense color=negative').tooltip('Restart Groundstation')
             
@@ -4272,7 +4272,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 
                 # Generate bag name with timestamp
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                bag_name = f"wildperpetua_{timestamp}"
+                bag_name = f"skyloop_{timestamp}"
                 bag_path = os.path.join(self._rosbag_dir, bag_name)
                 
                 # Start ros2 bag record in background

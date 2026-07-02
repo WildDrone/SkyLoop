@@ -1,12 +1,12 @@
 services:
-  wildperpetua:
+  skyloop:
     build:
       context: .
       args:
         UID: 1000
         GID: 1000
-    image: wildperpetua:latest
-    container_name: wildperpetua_ros2
+    image: skyloop:latest
+    container_name: skyloop_ros2
     stdin_open: true
     tty: true
     network_mode: host
@@ -17,13 +17,13 @@ services:
       - ROS_DOMAIN_ID=0
       - ROS_LOCALHOST_ONLY=0
       - QT_X11_NO_MITSHM=1
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/WildPerpetua/fastdds.xml
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/SkyLoop/fastdds.xml
     volumes:
-      - ./src:/WildPerpetua/src           # Live workspace mount
-      - ./recordings:/WildPerpetua/recordings  # Video/telemetry recordings
+      - ./src:/SkyLoop/src           # Live workspace mount
+      - ./recordings:/SkyLoop/recordings  # Video/telemetry recordings
       - /tmp/.X11-unix:/tmp/.X11-unix:rw # X11 socket for GUI
       - /dev/dri:/dev/dri                 # GPU access
-      - ./fastdds.xml:/WildPerpetua/fastdds.xml:ro  # DDS config
+      - ./fastdds.xml:/SkyLoop/fastdds.xml:ro  # DDS config
     devices:
       - /dev/dri:/dev/dri
     command: bash

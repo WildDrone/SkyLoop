@@ -1,4 +1,4 @@
-# WildPerpetua Python Dependencies
+# SkyLoop Python Dependencies
 # Generated from current working environment
 
 # NiceGUI Web Framework

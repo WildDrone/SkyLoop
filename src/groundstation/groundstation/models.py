@@ -1,9 +1,5 @@
-"""Domain models for the groundstation: mission/relay state and drone data.
-
-Previously these enums and dataclasses were split between ``mission_controller``
-and ``perpetual_monitor``, which forced the two modules to import types from
-each other. Collecting them here gives a single definition point and lets both
-modules (and the GUI) depend on data types rather than on each other.
+"""
+Domain models for the groundstation: mission/relay state and drone data.
 """
 
 from dataclasses import dataclass, field
