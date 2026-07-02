@@ -24,6 +24,7 @@ from nicegui import Event, app, ui, ui_run
 from groundstation.arrow import Arrow
 from groundstation.video_templates import (
     _fullscreen_video_html, _fullscreen_video_script, _webrtc_stream_script,
+    _webrtc_stop_script,
 )
 from groundstation.perpetual_monitor import (
     PerpetualMonitorNode, DroneData, DroneState,
@@ -3481,28 +3482,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Stop video stream for a drone."""
         video_element_id = f'remoteVideo_{namespace}'
         
-        ui.run_javascript(f'''
-        (function() {{
-            try {{
-                const conn = window["webrtc_{namespace}"];
-                if (conn) {{
-                    if (conn.ws) conn.ws.close();
-                    if (conn.pc) conn.pc.close();
-                    window["webrtc_{namespace}"] = null;
-                }}
-                
-                // Clear video element
-                const video = document.getElementById("{video_element_id}");
-                if (video) {{
-                    video.srcObject = null;
-                }}
-                
-                console.log("[WebRTC] Stream stopped for {namespace}");
-            }} catch (error) {{
-                console.error("[WebRTC] Error stopping stream: " + error);
-            }}
-        }})();
-        ''')
+        ui.run_javascript(_webrtc_stop_script(namespace, video_element_id))
         
         self._emit_log(f"[VIDEO] Stopped stream for {namespace}")
     

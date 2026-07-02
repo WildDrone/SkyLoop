@@ -197,3 +197,9 @@ def _webrtc_stream_script(namespace, ws_url, video_element_id):
             .replace('__NAMESPACE__', namespace)
             .replace('__WS_URL__', ws_url)
             .replace('__VIDEO_ELEMENT_ID__', video_element_id))
+
+
+def _webrtc_stop_script(namespace, video_element_id):
+    return (_load_js('webrtc_stop.js')
+            .replace('__NAMESPACE__', namespace)
+            .replace('__VIDEO_ELEMENT_ID__', video_element_id))
