@@ -3,34 +3,27 @@
 ## Prerequisites
 - Docker installed on your system
 - Docker Compose (optional, but recommended)
-- ROS2 Humble installed on host (for communication with container)
 
 ## Quick Start
 
 ### Option 1: Using Docker Compose (Recommended)
 
-1. **Setup host for ROS2 communication (one-time only):**
-   ```bash
-   ./setup_ros2_host.sh
-   source ~/.bashrc
-   ```
-
-2. **Build the Docker image:**
+1. **Build the Docker image:**
    ```bash
    docker compose build
    ```
 
-3. **Run the container:**
+2. **Run the container:**
    ```bash
    docker compose up -d
    ```
 
-4. **Access the container:**
+3. **Access the container:**
    ```bash
    docker compose exec wildperpetua bash
    ```
 
-5. **Inside the container, you can run ROS2 commands:**
+4. **Inside the container, you can run ROS2 commands:**
    ```bash
    # The workspace is already sourced
    ros2 pkg list
@@ -43,13 +36,7 @@
    ros2 run <package_name> <node_name>
    ```
 
-6. **From your host machine, you can now communicate with ROS2 nodes:**
-   ```bash
-   ros2 topic list
-   ros2 topic echo /chatter
-   ```
-
-7. **Stop the container:**
+5. **Stop the container:**
    ```bash
    docker compose down
    ```
