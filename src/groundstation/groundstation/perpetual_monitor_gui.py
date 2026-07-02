@@ -22,6 +22,9 @@ from rclpy.executors import ExternalShutdownException
 from nicegui import Event, app, ui, ui_run
 
 from groundstation.arrow import Arrow
+from groundstation.formatting import (
+    format_mmss, format_hms, battery_color, battery_status_color,
+)
 from groundstation.video_templates import (
     _fullscreen_video_html, _fullscreen_video_script, _webrtc_stream_script,
     _webrtc_stop_script,
@@ -1776,7 +1779,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             battery = data['level']
             
             if ns in self.drone_labels and 'battery' in self.drone_labels[ns]:
-                color = 'green' if battery > 50 else 'orange' if battery > 20 else 'red'
+                color = battery_status_color(battery)
                 self.drone_labels[ns]['battery'].text = f"{battery:.0f}%"
                 self.drone_labels[ns]['battery'].style(f'color: {color}; font-weight: bold')
         
@@ -1786,10 +1789,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             time_remaining = data['time_remaining']
             
             if ns in self.drone_labels and 'flight_time' in self.drone_labels[ns]:
-                minutes = int(time_remaining // 60)
-                seconds = int(time_remaining % 60)
                 color = 'green' if time_remaining > 300 else 'orange' if time_remaining > 120 else 'red'
-                self.drone_labels[ns]['flight_time'].text = f"{minutes}:{seconds:02d}"
+                self.drone_labels[ns]['flight_time'].text = format_mmss(time_remaining)
                 self.drone_labels[ns]['flight_time'].style(f'color: {color}; font-weight: bold')
         
         @self.drone_recording_update.subscribe
@@ -1894,10 +1895,8 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Update predicted RTH time
             if 'rth_predicted' in labels:
                 if predicted_rth != float('inf') and predicted_rth > 0:
-                    minutes = int(predicted_rth // 60)
-                    seconds = int(predicted_rth % 60)
                     color = '#2e7d32' if predicted_rth > 300 else '#f57c00' if predicted_rth > 120 else '#c62828'
-                    labels['rth_predicted'].text = f"{minutes}:{seconds:02d}"
+                    labels['rth_predicted'].text = format_mmss(predicted_rth)
                     labels['rth_predicted'].style(f'color: {color}; font-weight: bold')
                 else:
                     labels['rth_predicted'].text = "--:--"
@@ -2097,11 +2096,11 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                         self.travel_time_label.text = f"Travel: --:--"
                 else:
                     if hasattr(self, 'remaining_time_label'):
-                        self.remaining_time_label.text = f"To RTH: {int(remaining//60)}:{int(remaining%60):02d}"
+                        self.remaining_time_label.text = f"To RTH: {format_mmss(remaining)}"
                     if hasattr(self, 'travel_time_label'):
-                        self.travel_time_label.text = f"Travel: {int(travel//60)}:{int(travel%60):02d}"
+                        self.travel_time_label.text = f"Travel: {format_mmss(travel)}"
                 if hasattr(self, 'buffer_time_label'):
-                    self.buffer_time_label.text = f"Buffer: {int(buffer//60)}:{int(buffer%60):02d}"
+                    self.buffer_time_label.text = f"Buffer: {format_mmss(buffer)}"
             
             if self.countdown_label:
                 # Handle "Collecting..." state when countdown is -1
@@ -2114,9 +2113,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     if hasattr(self, 'relay_alert_container') and self.relay_alert_container:
                         self.relay_alert_container.style('display: none;')
                 elif countdown > 0:
-                    minutes = int(countdown // 60)
-                    seconds = int(countdown % 60)
-                    self.countdown_label.text = f"{minutes}:{seconds:02d}"
+                    self.countdown_label.text = format_mmss(countdown)
                     self.countdown_label.style('color: #bf360c; font-weight: bold')
                     
                     if self.countdown_progress:
@@ -3108,8 +3105,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     self.drone_labels[namespace]['state'] = ui.label(f"{drone.state.value}").classes('text-xs font-semibold px-2 py-1 rounded-full').style('background: #e8e8e8; color: #555;')
                     # Battery display
                     with ui.row().classes('items-center gap-1').style('background: #f5f5f5; padding: 4px 10px; border-radius: 16px;'):
-                        battery_color = '#4caf50' if drone.battery_level > 50 else '#ff9800' if drone.battery_level > 20 else '#f44336'
-                        ui.icon('battery_full').style(f'font-size: 18px; color: {battery_color};')
+                        ui.icon('battery_full').style(f'font-size: 18px; color: {battery_color(drone.battery_level)};')
                         self.drone_labels[namespace]['battery'] = ui.label(f"{drone.battery_level:.0f}%").classes('text-sm font-bold').style(f'color: {battery_color};')
                     # Expand indicator
                     expand_icon = ui.icon('expand_more').style('font-size: 24px; color: #666; transition: transform 0.3s;')
@@ -4174,10 +4170,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Update the mission timer display."""
         if self._mission_start_time is not None and self.mission_timer_label:
             elapsed = time.time() - self._mission_start_time
-            hours = int(elapsed // 3600)
-            minutes = int((elapsed % 3600) // 60)
-            seconds = int(elapsed % 60)
-            self.mission_timer_label.text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            self.mission_timer_label.text = format_hms(elapsed)
     
     def _stop_mission_ui(self):
         """Stop the current mission from UI."""
