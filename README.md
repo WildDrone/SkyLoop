@@ -248,7 +248,6 @@ See [src/dji_controller/dji_controller/controller.py](src/dji_controller/dji_con
 ---
 
 
-
 ## License
 
 [MIT](LICENSE) © Edouard Rolland
@@ -263,7 +262,13 @@ See [src/dji_controller/dji_controller/controller.py](src/dji_controller/dji_con
 
 ## Acknowledgements
 
-Built as part of the [**WildDrone**](https://wilddrone.eu/) project, funded by the European Union's Horizon Europe Research Programme under the Marie Skłodowska-Curie Grant Agreement No. 101071224, with additional funding from the EPSRC grant *Autonomous Drones for Nature Conservation Missions* (EP/X029077/1) and the Independent Research Fund Denmark (10.46540/4264-00105B).
+This work is supported by:
+
+- The **WildDrone** MSCA Doctoral Network, funded by the European Union's Horizon Europe programme under grant agreement no. 101071224
+- The **Innovation Fund Denmark** (DIREC U07 — PERSIST)
+- The **Independent Research Fund Denmark** (Grant 10.46540/4264-00105B — NAMUR)
+
+Built as part of the [**WildDrone**](https://wilddrone.eu/) project.
 
 Drone control relies on the [**WildBridge**](https://github.com/WildDrone/WildBridge) open-source Android app (Rolland et al., RiTA 2025), which exposes DJI SDK V5 telemetry, control, and video over a local network without requiring proprietary SDK dependencies on the ground station.
 
