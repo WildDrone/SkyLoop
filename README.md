@@ -43,13 +43,13 @@ IDLE → SETTING_RTH_ALTITUDE → TAKING_OFF → CLIMBING_TO_ALTITUDE
      → WAITING_FOR_RELAY → CAMERA_SYNC → RETURNING_HOME → COMPLETED
 ```
 
-During `CAMERA_SYNC`, the arriving drone performs a 360° yaw rotation so the outgoing drone's camera view can be matched before handoff.
+During `CAMERA_SYNC`, the lowest drone performs a 360° yaw rotation so the outgoing drone's camera view can be matched before handoff.
 
 ---
 
 ## Machine vision
 
-The live video feed can run an in-browser YOLOv8 object detector, overlaying bounding boxes and telemetry on the fullscreen stream — useful for spotting and counting animals during a mission without any server-side GPU.
+The live video feed can run an in-browser YOLOv8 object detector, overlaying bounding boxes and telemetry on the fullscreen stream — useful for spotting and counting objects during a mission without any server-side GPU.
 
 | Zebra herd detection | Volcano scene |
 |---|---|
