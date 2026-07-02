@@ -2640,103 +2640,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             ui.separator()
             
-            # Mission Status Card - Modern readable layout
-            with ui.card().classes('w-full p-4').style('background: linear-gradient(135deg, #fafafa 0%, #ffffff 100%); border: 1px solid #e0e0e0;'):
-                # Header row with status badges
-                with ui.row().classes('items-center gap-3 w-full pb-3').style('border-bottom: 1px solid #eeeeee;'):
-                    ui.icon('analytics').classes('text-2xl').style('color: #1976d2;')
-                    ui.label("Mission Status").classes('text-xl font-bold').style('color: #212121; flex-grow: 1;')
-                    self.mission_status_label = ui.label("Inactive").classes('text-sm font-bold px-3 py-1 rounded-full').style('background: #eeeeee; color: #616161;')
-                    self.active_drone_label = ui.label("--").classes('text-sm font-bold px-3 py-1 rounded-full').style('background: #e3f2fd; color: #1565c0;')
-                
-                # Main metrics row - Mission Duration & Relay Countdown
-                with ui.row().classes('w-full items-stretch gap-3 mt-4'):
-                    # Mission Duration Card
-                    with ui.column().classes('items-center justify-center p-4 rounded-lg flex-1').style('background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); min-height: 90px;'):
-                        ui.label("MISSION DURATION").classes('text-xs font-bold tracking-wide').style('color: #1565c0; letter-spacing: 1px;')
-                        self.mission_timer_label = ui.label("00:00:00").classes('text-3xl font-bold font-mono mt-1').style('color: #0d47a1;')
-                    
-                    # Relay Countdown Card
-                    with ui.column().classes('items-center justify-center p-4 rounded-lg flex-1').style('background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); min-height: 90px;') as self.countdown_container:
-                        ui.label("NEXT RELAY").classes('text-xs font-bold tracking-wide').style('color: #e65100; letter-spacing: 1px;')
-                        self.countdown_label = ui.label("--:--").classes('text-3xl font-bold font-mono mt-1').style('color: #bf360c;')
-                    
-                    # Force Swap Button
-                    with ui.column().classes('items-center justify-center'):
-                        self.force_swap_button = ui.button('SWAP', icon='swap_horiz', on_click=self._force_swap_clicked).props('color=warning unelevated').classes('px-4').style('height: 90px; font-weight: bold;').tooltip('Manually trigger relay swap')
-                
-                # Enhanced Progress Bar with phase indicators
-                with ui.column().classes('w-full mt-4 gap-1'):
-                    # Phase labels row
-                    with ui.row().classes('w-full items-center justify-between px-1'):
-                        ui.label("LAUNCH").classes('text-xs font-bold').style('color: #c62828; width: 20%;')
-                        ui.label("CONNECT").classes('text-xs font-bold').style('color: #e65100; width: 20%; text-align: center;')
-                        ui.label("READY").classes('text-xs font-bold').style('color: #f9a825; width: 20%; text-align: center;')
-                        ui.label("PREPARE").classes('text-xs font-bold').style('color: #388e3c; width: 20%; text-align: center;')
-                        ui.label("OK").classes('text-xs font-bold').style('color: #1976d2; width: 20%; text-align: right;')
-                    
-                    # Segmented progress bar container
-                    with ui.row().classes('w-full items-center gap-1').style('height: 24px;'):
-                        # Segment 1: 0-1 min (LAUNCH - critical)
-                        self.progress_segment_1 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #ffcdd2; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
-                        # Segment 2: 1-3 min (CONNECT - urgent)  
-                        self.progress_segment_2 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #ffe0b2; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
-                        # Segment 3: 3-5 min (READY - warning)
-                        self.progress_segment_3 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #fff9c4; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
-                        # Segment 4: 5+ min (PREPARE - normal)
-                        self.progress_segment_4 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #c8e6c9; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
-                    
-                    # Time markers row
-                    with ui.row().classes('w-full items-center justify-between px-1'):
-                        ui.label("0:00").classes('text-xs').style('color: #9e9e9e; width: 20%;')
-                        ui.label("1:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
-                        ui.label("3:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
-                        ui.label("5:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
-                        ui.label("").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: right;')
-                
-                # Hidden original progress (for compatibility)
-                self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback').style('display: none;')
-                
-                # Timing breakdown row (hidden by default)
-                with ui.row().classes('w-full gap-2 mt-3 justify-center').style('display: none;') as self.timing_breakdown_container:
-                    with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #e3f2fd; border: 1px solid #90caf9;'):
-                        ui.icon('battery_alert', size='sm').style('color: #1565c0;')
-                        self.remaining_time_label = ui.label("To RTH: --").classes('text-sm font-medium').style('color: #1565c0;')
-                    with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #fff3e0; border: 1px solid #ffcc80;'):
-                        ui.icon('route', size='sm').style('color: #e65100;')
-                        self.travel_time_label = ui.label("Travel: --").classes('text-sm font-medium').style('color: #e65100;')
-                    with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #fce4ec; border: 1px solid #f48fb1;'):
-                        ui.icon('security', size='sm').style('color: #c2185b;')
-                        self.buffer_time_label = ui.label("Buffer: --").classes('text-sm font-medium').style('color: #c2185b;')
-                
-                # Relay alert (hidden by default)
-                with ui.row().classes('w-full items-center gap-3 mt-3 p-3 rounded-lg').style('background: linear-gradient(135deg, #fff3e0 0%, #ffecb3 100%); border: 2px solid #ff9800; display: none;') as self.relay_alert_container:
-                    self.relay_alert_icon = ui.icon('notifications_active').classes('text-2xl').style('color: #e65100;')
-                    self.relay_alert_label = ui.label("").classes('font-bold text-base').style('color: #bf360c;')
-                
-                # Bottom info row: Battery swap and Drones needed
-                with ui.row().classes('w-full gap-3 mt-4'):
-                    with ui.row().classes('items-center gap-3 p-3 rounded-lg flex-1').style('background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border: 1px solid #a5d6a7;'):
-                        ui.icon('battery_charging_full').classes('text-xl').style('color: #2e7d32;')
-                        with ui.column().classes('gap-0'):
-                            ui.label("Battery Swap").classes('text-xs font-bold').style('color: #1b5e20;')
-                            self.reconnect_label = ui.label("None").classes('text-sm font-medium').style('color: #2e7d32;')
-                    
-                    with ui.column().classes('p-3 rounded-lg flex-1 gap-1').style('background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border: 1px solid #90caf9;'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.icon('group').classes('text-lg').style('color: #1565c0;')
-                            ui.label("Drones Required").classes('text-xs font-bold').style('color: #0d47a1;')
-                        with ui.row().classes('w-full items-center gap-2'):
-                            self.drones_needed_flying_label = ui.label("~--").classes('text-lg font-bold').style('color: #1565c0;')
-                            ui.label("flying").classes('text-xs').style('color: #1976d2;')
-                            ui.label("/").classes('text-sm').style('color: #90caf9;')
-                            self.drones_needed_total_label = ui.label("--").classes('text-lg font-bold').style('color: #0d47a1;')
-                            ui.label("total").classes('text-xs').style('color: #1976d2;')
-                        with ui.row().classes('w-full items-center gap-1'):
-                            self.drones_needed_info_label = ui.label("--").classes('text-xs').style('color: #42a5f5;')
-                            self.drones_needed_status_icon = ui.icon('check_circle').style('font-size: 14px; color: #4caf50;')
-                        self.drones_needed_ready_label = ui.label("-- ready").classes('text-xs font-medium').style('color: #2e7d32;')
-            
+            self._build_mission_status_card()
             ui.separator()
             
             # Drone list container
@@ -2745,6 +2649,104 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             
             # Note: _refresh_drone_list() is called after map is created in _build_ui()
     
+
+    def _build_mission_status_card(self):
+        """Build the mission status / relay-countdown card."""
+        with ui.card().classes('w-full p-4').style('background: linear-gradient(135deg, #fafafa 0%, #ffffff 100%); border: 1px solid #e0e0e0;'):
+            # Header row with status badges
+            with ui.row().classes('items-center gap-3 w-full pb-3').style('border-bottom: 1px solid #eeeeee;'):
+                ui.icon('analytics').classes('text-2xl').style('color: #1976d2;')
+                ui.label("Mission Status").classes('text-xl font-bold').style('color: #212121; flex-grow: 1;')
+                self.mission_status_label = ui.label("Inactive").classes('text-sm font-bold px-3 py-1 rounded-full').style('background: #eeeeee; color: #616161;')
+                self.active_drone_label = ui.label("--").classes('text-sm font-bold px-3 py-1 rounded-full').style('background: #e3f2fd; color: #1565c0;')
+                
+            # Main metrics row - Mission Duration & Relay Countdown
+            with ui.row().classes('w-full items-stretch gap-3 mt-4'):
+                # Mission Duration Card
+                with ui.column().classes('items-center justify-center p-4 rounded-lg flex-1').style('background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); min-height: 90px;'):
+                    ui.label("MISSION DURATION").classes('text-xs font-bold tracking-wide').style('color: #1565c0; letter-spacing: 1px;')
+                    self.mission_timer_label = ui.label("00:00:00").classes('text-3xl font-bold font-mono mt-1').style('color: #0d47a1;')
+                    
+                # Relay Countdown Card
+                with ui.column().classes('items-center justify-center p-4 rounded-lg flex-1').style('background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); min-height: 90px;') as self.countdown_container:
+                    ui.label("NEXT RELAY").classes('text-xs font-bold tracking-wide').style('color: #e65100; letter-spacing: 1px;')
+                    self.countdown_label = ui.label("--:--").classes('text-3xl font-bold font-mono mt-1').style('color: #bf360c;')
+                    
+                # Force Swap Button
+                with ui.column().classes('items-center justify-center'):
+                    self.force_swap_button = ui.button('SWAP', icon='swap_horiz', on_click=self._force_swap_clicked).props('color=warning unelevated').classes('px-4').style('height: 90px; font-weight: bold;').tooltip('Manually trigger relay swap')
+                
+            # Enhanced Progress Bar with phase indicators
+            with ui.column().classes('w-full mt-4 gap-1'):
+                # Phase labels row
+                with ui.row().classes('w-full items-center justify-between px-1'):
+                    ui.label("LAUNCH").classes('text-xs font-bold').style('color: #c62828; width: 20%;')
+                    ui.label("CONNECT").classes('text-xs font-bold').style('color: #e65100; width: 20%; text-align: center;')
+                    ui.label("READY").classes('text-xs font-bold').style('color: #f9a825; width: 20%; text-align: center;')
+                    ui.label("PREPARE").classes('text-xs font-bold').style('color: #388e3c; width: 20%; text-align: center;')
+                    ui.label("OK").classes('text-xs font-bold').style('color: #1976d2; width: 20%; text-align: right;')
+                    
+                # Segmented progress bar container
+                with ui.row().classes('w-full items-center gap-1').style('height: 24px;'):
+                    # Segment 1: 0-1 min (LAUNCH - critical)
+                    self.progress_segment_1 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #ffcdd2; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                    # Segment 2: 1-3 min (CONNECT - urgent)  
+                    self.progress_segment_2 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #ffe0b2; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                    # Segment 3: 3-5 min (READY - warning)
+                    self.progress_segment_3 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #fff9c4; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                    # Segment 4: 5+ min (PREPARE - normal)
+                    self.progress_segment_4 = ui.html('<div style="width: 100%; height: 100%; border-radius: 4px; background: #c8e6c9; transition: all 0.3s;"></div>', sanitize=False).classes('flex-1').style('height: 20px; border-radius: 4px; overflow: hidden;')
+                    
+                # Time markers row
+                with ui.row().classes('w-full items-center justify-between px-1'):
+                    ui.label("0:00").classes('text-xs').style('color: #9e9e9e; width: 20%;')
+                    ui.label("1:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
+                    ui.label("3:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
+                    ui.label("5:00").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: center;')
+                    ui.label("").classes('text-xs').style('color: #9e9e9e; width: 20%; text-align: right;')
+                
+            # Hidden original progress (for compatibility)
+            self.countdown_progress = ui.linear_progress(value=0).props('instant-feedback').style('display: none;')
+                
+            # Timing breakdown row (hidden by default)
+            with ui.row().classes('w-full gap-2 mt-3 justify-center').style('display: none;') as self.timing_breakdown_container:
+                with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #e3f2fd; border: 1px solid #90caf9;'):
+                    ui.icon('battery_alert', size='sm').style('color: #1565c0;')
+                    self.remaining_time_label = ui.label("To RTH: --").classes('text-sm font-medium').style('color: #1565c0;')
+                with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #fff3e0; border: 1px solid #ffcc80;'):
+                    ui.icon('route', size='sm').style('color: #e65100;')
+                    self.travel_time_label = ui.label("Travel: --").classes('text-sm font-medium').style('color: #e65100;')
+                with ui.row().classes('items-center gap-2 px-3 py-2 rounded-lg').style('background: #fce4ec; border: 1px solid #f48fb1;'):
+                    ui.icon('security', size='sm').style('color: #c2185b;')
+                    self.buffer_time_label = ui.label("Buffer: --").classes('text-sm font-medium').style('color: #c2185b;')
+                
+            # Relay alert (hidden by default)
+            with ui.row().classes('w-full items-center gap-3 mt-3 p-3 rounded-lg').style('background: linear-gradient(135deg, #fff3e0 0%, #ffecb3 100%); border: 2px solid #ff9800; display: none;') as self.relay_alert_container:
+                self.relay_alert_icon = ui.icon('notifications_active').classes('text-2xl').style('color: #e65100;')
+                self.relay_alert_label = ui.label("").classes('font-bold text-base').style('color: #bf360c;')
+                
+            # Bottom info row: Battery swap and Drones needed
+            with ui.row().classes('w-full gap-3 mt-4'):
+                with ui.row().classes('items-center gap-3 p-3 rounded-lg flex-1').style('background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border: 1px solid #a5d6a7;'):
+                    ui.icon('battery_charging_full').classes('text-xl').style('color: #2e7d32;')
+                    with ui.column().classes('gap-0'):
+                        ui.label("Battery Swap").classes('text-xs font-bold').style('color: #1b5e20;')
+                        self.reconnect_label = ui.label("None").classes('text-sm font-medium').style('color: #2e7d32;')
+                    
+                with ui.column().classes('p-3 rounded-lg flex-1 gap-1').style('background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border: 1px solid #90caf9;'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('group').classes('text-lg').style('color: #1565c0;')
+                        ui.label("Drones Required").classes('text-xs font-bold').style('color: #0d47a1;')
+                    with ui.row().classes('w-full items-center gap-2'):
+                        self.drones_needed_flying_label = ui.label("~--").classes('text-lg font-bold').style('color: #1565c0;')
+                        ui.label("flying").classes('text-xs').style('color: #1976d2;')
+                        ui.label("/").classes('text-sm').style('color: #90caf9;')
+                        self.drones_needed_total_label = ui.label("--").classes('text-lg font-bold').style('color: #0d47a1;')
+                        ui.label("total").classes('text-xs').style('color: #1976d2;')
+                    with ui.row().classes('w-full items-center gap-1'):
+                        self.drones_needed_info_label = ui.label("--").classes('text-xs').style('color: #42a5f5;')
+                        self.drones_needed_status_icon = ui.icon('check_circle').style('font-size: 14px; color: #4caf50;')
+                    self.drones_needed_ready_label = ui.label("-- ready").classes('text-xs font-medium').style('color: #2e7d32;')
     def _build_right_panel(self):
         """Build the right panel with map and mission control."""
         with ui.card().classes('h-full').style('flex: 3; display: flex; flex-direction: column; min-width: 0; overflow-x: hidden; overflow-y: auto;'):
@@ -2758,303 +2760,310 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 # Map click handler
                 self.map.on('map-click', self._on_map_click)
             
-            # Control panels - ultra-compact single row layout
-            with ui.row().classes('w-full gap-1 items-stretch mt-1'):
-                # Card 1: Navigation (compact)
-                with ui.card().classes('p-0').style('flex: 1.3; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
-                    # Header
-                    with ui.row().classes('w-full items-center justify-between').style('background: linear-gradient(135deg, #e53935 0%, #c62828 100%); padding: 6px 10px; min-height: 32px;'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.icon('navigation').style('color: white; font-size: 16px;')
-                            ui.label("Navigation").classes('text-sm font-bold').style('color: white;')
-                        with ui.row().classes('items-center gap-0'):
-                            ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('round dense size=xs flat').style('color: white; padding: 2px;').tooltip('Set')
-                            ui.button(icon='delete_outline', on_click=self._clear_monitoring_point_ui).props('round dense size=xs flat').style('color: rgba(255,255,255,0.7); padding: 2px;').tooltip('Clear')
-                            ui.button(icon='cancel', on_click=self._abort_trajectories).props('round dense size=xs flat').style('color: #ffab91; padding: 2px;').tooltip('Abort')
-                    
-                    # Content - all in minimal space
-                    with ui.column().classes('w-full gap-0 justify-center').style('padding: 6px; flex: 1;'):
-                        # Inputs row
-                        with ui.row().classes('w-full gap-1'):
-                            self.lat_input = ui.input(label='Lat', value='0.0', on_change=self._on_monitoring_coords_change).props('dense outlined').style('flex: 1;')
-                            self.lon_input = ui.input(label='Lon', value='0.0', on_change=self._on_monitoring_coords_change).props('dense outlined').style('flex: 1;')
-                            self.alt_input = ui.input(label='Alt', value='50').props('dense outlined').style('flex: 0.5;')
-                            self.heading_input = ui.input(label='Hdg', value='0').props('dense outlined').style('flex: 0.4;')
-                        # Mode + Speed row
-                        with ui.row().classes('w-full items-center gap-1 mt-1'):
-                            self.nav_mode_label = ui.label('PID').classes('text-xs font-bold').style('color: #1976d2; background: #e3f2fd; padding: 2px 6px; border-radius: 4px;')
-                            self.nav_mode_switch = ui.switch('DJI', value=False, on_change=self._on_nav_mode_change).props('dense size=xs color=red')
-                            self.trajectory_speed_slider = ui.slider(min=1, max=15, value=15, step=1, on_change=self._on_trajectory_speed_change).props('color=red').classes('flex-1')
-                            self.trajectory_speed_label = ui.label('15 m/s').classes('text-xs font-bold').style('color: #e53935;')
-                
-                # Card 2: Vertical Separation (minimal)
-                with ui.card().classes('p-0').style('flex: 0.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;') as self.vertical_sep_card:
-                    # Header
-                    with ui.row().classes('w-full items-center gap-2').style('background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); padding: 6px 10px; min-height: 32px;'):
-                        ui.icon('height').style('color: white; font-size: 16px;')
-                        ui.label("Vertical Sep.").classes('text-sm font-bold').style('color: white;')
-                    
-                    # Content
-                    with ui.column().classes('w-full items-center justify-center gap-1').style('padding: 6px; flex: 1;') as self.vertical_sep_content:
-                        # Toggle + Badge row
-                        with ui.row().classes('w-full items-center justify-center gap-2'):
-                            self.vertical_sep_enabled_switch = ui.switch(value=True, on_change=self._on_vertical_sep_toggle).props('dense size=sm color=orange')
-                            self.vertical_sep_status_badge = ui.badge('N/A', color='grey').classes('text-xs')
-                        # Values row
-                        with ui.row().classes('items-center gap-1'):
-                            self.vertical_sep_current_label = ui.label('--').classes('text-lg font-bold').style('color: #424242;')
-                            ui.icon('compare_arrows').style('font-size: 14px; color: #bdbdbd;')
-                            ui.label('5m').classes('text-lg font-bold').style('color: #2e7d32;')
-                        self.vertical_sep_drones_list = ui.column().classes('w-full gap-0')
-                        with ui.row().classes('w-full items-center gap-1 p-1 rounded').style('background: #ffebee; display: none;') as self.vertical_sep_countdown_row:
-                            ui.icon('warning').style('font-size: 12px; color: #c62828;')
-                            self.vertical_sep_countdown_label = ui.label('RTH: --s').classes('text-xs font-bold').style('color: #c62828;')
-                            self.vertical_sep_countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=red size=xs').classes('flex-1')
-                    self.vertical_sep_disabled_msg = ui.label('Off').classes('w-full text-center text-xs').style('color: #9e9e9e; display: none; flex: 1; display: flex; align-items: center; justify-content: center;')
-                
-                # Card 3: Mission (larger)
-                with ui.card().classes('p-0').style('flex: 1.4; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
-                    # Header
-                    with ui.row().classes('w-full items-center justify-between').style('background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%); padding: 6px 10px; min-height: 32px;'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.icon('flag').style('color: white; font-size: 16px;')
-                            ui.label("Mission").classes('text-sm font-bold').style('color: white;')
-                        with ui.row().classes('items-center gap-2'):
-                            # ROS Bag recording toggle
-                            with ui.row().classes('items-center gap-1 px-2 rounded').style('background: rgba(255,255,255,0.2);'):
-                                ui.icon('fiber_manual_record').style('color: white; font-size: 14px;')
-                                self.rosbag_switch = ui.switch('ROS Bag', value=False, on_change=self._on_rosbag_change).props('dense size=xs color=red dark')
-                            # Camera sync toggle
-                            with ui.row().classes('items-center gap-1 px-2 rounded').style('background: rgba(255,255,255,0.2);'):
-                                ui.icon('videocam').style('color: white; font-size: 14px;')
-                                self.camera_sync_switch = ui.switch('Sync', value=True, on_change=self._on_camera_sync_change).props('dense size=xs color=white dark')
-                    
-                    # Content
-                    with ui.column().classes('w-full gap-1 justify-center').style('padding: 8px; flex: 1;'):
-                        # Row 1: Mode toggle (bigger)
-                        with ui.row().classes('w-full items-center gap-2'):
-                            self.mission_mode_label = ui.label('📍 Monitor').classes('text-sm font-bold').style('color: #1976d2; background: #e3f2fd; padding: 4px 10px; border-radius: 6px; min-width: 80px; text-align: center;')
-                            self.mission_mode_switch = ui.switch('Free', value=False, on_change=self._on_mission_mode_change).props('size=md color=primary')
-                        # Row 2: Params (bigger inputs)
-                        with ui.row().classes('w-full gap-1'):
-                            self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').style('flex: 1;')
-                            self.safety_buffer_input = ui.input(label='Buffer', value='60', on_change=self._on_safety_buffer_change).props('dense outlined').style('flex: 1;')
-                            self.min_battery_input = ui.input(label='Min Bat%', value='30').props('dense outlined').style('flex: 1;')
-                            self.min_satellites_input = ui.input(label='Min Sat', value='8').props('dense outlined').style('flex: 0.8;')
-                        # Row 3: Buttons (bigger)
-                        with ui.row().classes('w-full gap-2 mt-1'):
-                            ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=sm').style('flex: 1;')
-                            ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=sm').style('flex: 1;')
-                            ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=sm').style('flex: 1;')
+            self._build_control_panels()
+            self._build_logs_and_stats()
 
-                        # Row 4: Rotation view/control
-                        with ui.column().classes('w-full gap-1 mt-1'):
-                            with ui.row().classes('items-center gap-2'):
-                                ui.icon('sync_alt').style('font-size: 16px; color: #1565c0;')
-                                ui.label('Rotation').classes('text-sm font-bold').style('color: #1565c0;')
-                            with ui.row().classes('w-full items-center gap-2'):
-                                self.rotation_order_label = ui.label('Order: --').classes('text-xs').style('color: #1976d2;')
-                                self.rotation_next_label = ui.label('Next: --').classes('text-xs font-bold').style('color: #0d47a1;')
-                            with ui.row().classes('w-full items-center gap-2'):
-                                options = []
-                                if self.mission_controller and self.mission_controller.drone_order:
-                                    options = self.mission_controller.drone_order.copy()
-                                self.rotation_select = ui.select(options=options, value=(self.mission_controller.get_next_drone() if self.mission_controller else None), label='Set next').props('dense outlined').classes('flex-1')
-                                ui.button('Apply', icon='check', on_click=self._apply_next_drone_override).props('color=primary no-caps dense size=sm')
-                                ui.button('Reset', icon='restart_alt', on_click=self._reset_next_drone_override).props('flat no-caps dense size=sm')
+
+    def _build_control_panels(self):
+        """Build the compact mission-control panel row."""
+        # Control panels - ultra-compact single row layout
+        with ui.row().classes('w-full gap-1 items-stretch mt-1'):
+            # Card 1: Navigation (compact)
+            with ui.card().classes('p-0').style('flex: 1.3; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
+                # Header
+                with ui.row().classes('w-full items-center justify-between').style('background: linear-gradient(135deg, #e53935 0%, #c62828 100%); padding: 6px 10px; min-height: 32px;'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('navigation').style('color: white; font-size: 16px;')
+                        ui.label("Navigation").classes('text-sm font-bold').style('color: white;')
+                    with ui.row().classes('items-center gap-0'):
+                        ui.button(icon='push_pin', on_click=self._set_monitoring_point_manual).props('round dense size=xs flat').style('color: white; padding: 2px;').tooltip('Set')
+                        ui.button(icon='delete_outline', on_click=self._clear_monitoring_point_ui).props('round dense size=xs flat').style('color: rgba(255,255,255,0.7); padding: 2px;').tooltip('Clear')
+                        ui.button(icon='cancel', on_click=self._abort_trajectories).props('round dense size=xs flat').style('color: #ffab91; padding: 2px;').tooltip('Abort')
+                    
+                # Content - all in minimal space
+                with ui.column().classes('w-full gap-0 justify-center').style('padding: 6px; flex: 1;'):
+                    # Inputs row
+                    with ui.row().classes('w-full gap-1'):
+                        self.lat_input = ui.input(label='Lat', value='0.0', on_change=self._on_monitoring_coords_change).props('dense outlined').style('flex: 1;')
+                        self.lon_input = ui.input(label='Lon', value='0.0', on_change=self._on_monitoring_coords_change).props('dense outlined').style('flex: 1;')
+                        self.alt_input = ui.input(label='Alt', value='50').props('dense outlined').style('flex: 0.5;')
+                        self.heading_input = ui.input(label='Hdg', value='0').props('dense outlined').style('flex: 0.4;')
+                    # Mode + Speed row
+                    with ui.row().classes('w-full items-center gap-1 mt-1'):
+                        self.nav_mode_label = ui.label('PID').classes('text-xs font-bold').style('color: #1976d2; background: #e3f2fd; padding: 2px 6px; border-radius: 4px;')
+                        self.nav_mode_switch = ui.switch('DJI', value=False, on_change=self._on_nav_mode_change).props('dense size=xs color=red')
+                        self.trajectory_speed_slider = ui.slider(min=1, max=15, value=15, step=1, on_change=self._on_trajectory_speed_change).props('color=red').classes('flex-1')
+                        self.trajectory_speed_label = ui.label('15 m/s').classes('text-xs font-bold').style('color: #e53935;')
                 
-                # Card 4: State Machine (compact)
-                with ui.card().classes('p-0').style('flex: 1.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
-                    # Header
-                    with ui.row().classes('w-full items-center gap-2').style('background: linear-gradient(135deg, #43a047 0%, #388e3c 100%); padding: 6px 10px; min-height: 32px;'):
-                        ui.icon('account_tree').style('color: white; font-size: 16px;')
-                        ui.label("State Machine").classes('text-sm font-bold').style('color: white;')
+            # Card 2: Vertical Separation (minimal)
+            with ui.card().classes('p-0').style('flex: 0.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;') as self.vertical_sep_card:
+                # Header
+                with ui.row().classes('w-full items-center gap-2').style('background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); padding: 6px 10px; min-height: 32px;'):
+                    ui.icon('height').style('color: white; font-size: 16px;')
+                    ui.label("Vertical Sep.").classes('text-sm font-bold').style('color: white;')
                     
-                    # Content
-                    self.state_machine_container = ui.column().classes('w-full gap-0 justify-center').style('padding: 6px; flex: 1;')
-                    with self.state_machine_container:
-                        self._build_state_machine_display()
-            
-            # Bottom row: Event Log and Mission Statistics side by side (or Debug Console when enabled)
-            # Normal view container
-            with ui.column().classes('w-full gap-2') as self.normal_logs_container:
-                with ui.row().classes('w-full gap-2 items-stretch').style('min-width: 0;'):
-                    # Event Log
-                    with ui.card().classes('p-2').style('flex: 1; min-width: 0; overflow: hidden;'):
-                        with ui.row().classes('items-center gap-2 pb-1').style('border-bottom: 1px solid #e0e0e0;'):
-                            ui.icon('list_alt').classes('text-lg text-primary')
-                            ui.label("Event Log").classes('text-sm font-bold')
-                        with ui.scroll_area().classes('w-full').style('height: 100px;').props('id=event-log') as self.event_scroll:
-                            self.event_log = ui.column().classes('w-full gap-0')
-                    
-                    # Mission Statistics (hidden when debug console is shown)
-                    with ui.card().classes('p-2').style('flex: 1; min-width: 0; overflow: hidden;') as self.mission_stats_card:
-                        with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #e0e0e0;'):
-                            ui.icon('analytics').classes('text-lg text-primary')
-                            ui.label("Mission Statistics").classes('text-sm font-bold')
-                            ui.space()
-                            ui.button(icon='delete', on_click=self._clear_mission_stats).props('flat dense size=sm').tooltip('Clear')
-                        
-                        # Header row
-                        with ui.row().classes('w-full text-xs font-bold text-gray-500 gap-0 mt-1'):
-                            ui.label("Drone").style('flex: 2;')
-                            ui.label("#").style('flex: 0.8; text-align: center;')
-                            ui.label("Est.").style('flex: 1.2; text-align: center;')
-                            ui.label("Travel").style('flex: 1.2; text-align: center;')
-                            ui.label("RTH").style('flex: 1.2; text-align: center;')
-                        
-                        with ui.scroll_area().classes('w-full').style('height: 80px;') as self.mission_stats_scroll:
-                            self.mission_stats_container = ui.column().classes('w-full gap-0')
-                    
-                    # ROS Console (hidden by default, shown in place of Mission Stats)
-                    with ui.card().classes('p-2').style('flex: 1; display: none;') as self.debug_console_container:
-                        with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #ffcc80;'):
-                            ui.icon('terminal').classes('text-lg').style('color: #e65100;')
-                            ui.label("ROS Console").classes('text-sm font-bold').style('color: #e65100;')
-                            ui.space()
-                            ui.button(icon='delete', on_click=self._clear_debug_console).props('flat dense size=sm').tooltip('Clear console')
-                        
-                        with ui.scroll_area().classes('w-full').style('height: 100px; background: #1e1e1e; border-radius: 4px;') as self.debug_scroll:
-                            self.debug_console = ui.column().classes('w-full gap-0 p-2')
+                # Content
+                with ui.column().classes('w-full items-center justify-center gap-1').style('padding: 6px; flex: 1;') as self.vertical_sep_content:
+                    # Toggle + Badge row
+                    with ui.row().classes('w-full items-center justify-center gap-2'):
+                        self.vertical_sep_enabled_switch = ui.switch(value=True, on_change=self._on_vertical_sep_toggle).props('dense size=sm color=orange')
+                        self.vertical_sep_status_badge = ui.badge('N/A', color='grey').classes('text-xs')
+                    # Values row
+                    with ui.row().classes('items-center gap-1'):
+                        self.vertical_sep_current_label = ui.label('--').classes('text-lg font-bold').style('color: #424242;')
+                        ui.icon('compare_arrows').style('font-size: 14px; color: #bdbdbd;')
+                        ui.label('5m').classes('text-lg font-bold').style('color: #2e7d32;')
+                    self.vertical_sep_drones_list = ui.column().classes('w-full gap-0')
+                    with ui.row().classes('w-full items-center gap-1 p-1 rounded').style('background: #ffebee; display: none;') as self.vertical_sep_countdown_row:
+                        ui.icon('warning').style('font-size: 12px; color: #c62828;')
+                        self.vertical_sep_countdown_label = ui.label('RTH: --s').classes('text-xs font-bold').style('color: #c62828;')
+                        self.vertical_sep_countdown_progress = ui.linear_progress(value=0).props('instant-feedback color=red size=xs').classes('flex-1')
+                self.vertical_sep_disabled_msg = ui.label('Off').classes('w-full text-center text-xs').style('color: #9e9e9e; display: none; flex: 1; display: flex; align-items: center; justify-content: center;')
                 
-                # RTH Prediction Debug Panel (expansion)
-                with ui.expansion("RTH Prediction Debug", icon='bug_report').classes('w-full').style('background: #fff8e1;') as self.rth_debug_expansion:
-                    with ui.card().classes('w-full p-2').style('background: #fffde7;') as self.rth_debug_container:
-                        # Formula explanation
-                        with ui.row().classes('w-full items-center gap-2 pb-2').style('border-bottom: 1px solid #ffe082;'):
-                            ui.icon('calculate').style('color: #f57c00;')
-                            ui.label("Countdown = Predicted RTH - Travel Time - Buffer").classes('text-xs font-mono').style('color: #e65100;')
-                        
-                        # Debug info grid
-                        with ui.grid(columns=2).classes('w-full gap-x-4 gap-y-1 mt-2'):
-                            # Left column - Battery & Threshold
-                            ui.label("Current Battery:").classes('text-xs font-bold')
-                            self.rth_debug_battery = ui.label("--").classes('text-xs font-mono')
-                            
-                            ui.label("Batt Needed (now):").classes('text-xs font-bold')
-                            self.rth_debug_batt_needed = ui.label("--").classes('text-xs font-mono')
-                            
-                            ui.label("Batt Needed (MAX):").classes('text-xs font-bold').style('color: #d32f2f;')
-                            self.rth_debug_batt_max = ui.label("--").classes('text-xs font-mono font-bold').style('color: #d32f2f;')
-                            
-                            ui.label("RTH Threshold:").classes('text-xs font-bold').tooltip('MAX BattNeeded + 2%')
-                            self.rth_debug_threshold = ui.label("--").classes('text-xs font-mono')
-                            
-                            ui.label("Drain Rate:").classes('text-xs font-bold')
-                            self.rth_debug_drain = ui.label("--").classes('text-xs font-mono')
-                            
-                            ui.label("Data Points:").classes('text-xs font-bold')
-                            self.rth_debug_points = ui.label("--").classes('text-xs font-mono')
-                            
-                            ui.label("Monitoring Time:").classes('text-xs font-bold')
-                            self.rth_debug_elapsed = ui.label("--").classes('text-xs font-mono')
-                        
-                        ui.separator().classes('my-2')
-                        
-                        # Comparison section
-                        with ui.row().classes('w-full gap-4'):
-                            with ui.column().classes('flex-1'):
-                                ui.label("Predicted RTH:").classes('text-xs font-bold').style('color: #1565c0;')
-                                self.rth_debug_predicted = ui.label("--").classes('text-lg font-bold font-mono').style('color: #1565c0;')
-                            with ui.column().classes('flex-1'):
-                                ui.label("DJI Flight Time:").classes('text-xs font-bold').style('color: #7b1fa2;')
-                                self.rth_debug_dji = ui.label("--").classes('text-lg font-bold font-mono').style('color: #7b1fa2;')
-                            with ui.column().classes('flex-1'):
-                                ui.label("Difference:").classes('text-xs font-bold').style('color: #d32f2f;')
-                                self.rth_debug_diff = ui.label("--").classes('text-lg font-bold font-mono').style('color: #d32f2f;')
-                        
-                        # Regression details
-                        ui.separator().classes('my-2')
-                        with ui.row().classes('w-full gap-2'):
-                            ui.label("Regression:").classes('text-xs font-bold')
-                            self.rth_debug_regression = ui.label("battery(t) = slope × t + intercept").classes('text-xs font-mono').style('color: #616161;')
-                        
-                        # Live regression chart
-                        ui.separator().classes('my-2')
+            # Card 3: Mission (larger)
+            with ui.card().classes('p-0').style('flex: 1.4; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
+                # Header
+                with ui.row().classes('w-full items-center justify-between').style('background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%); padding: 6px 10px; min-height: 32px;'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('flag').style('color: white; font-size: 16px;')
+                        ui.label("Mission").classes('text-sm font-bold').style('color: white;')
+                    with ui.row().classes('items-center gap-2'):
+                        # ROS Bag recording toggle
+                        with ui.row().classes('items-center gap-1 px-2 rounded').style('background: rgba(255,255,255,0.2);'):
+                            ui.icon('fiber_manual_record').style('color: white; font-size: 14px;')
+                            self.rosbag_switch = ui.switch('ROS Bag', value=False, on_change=self._on_rosbag_change).props('dense size=xs color=red dark')
+                        # Camera sync toggle
+                        with ui.row().classes('items-center gap-1 px-2 rounded').style('background: rgba(255,255,255,0.2);'):
+                            ui.icon('videocam').style('color: white; font-size: 14px;')
+                            self.camera_sync_switch = ui.switch('Sync', value=True, on_change=self._on_camera_sync_change).props('dense size=xs color=white dark')
+                    
+                # Content
+                with ui.column().classes('w-full gap-1 justify-center').style('padding: 8px; flex: 1;'):
+                    # Row 1: Mode toggle (bigger)
+                    with ui.row().classes('w-full items-center gap-2'):
+                        self.mission_mode_label = ui.label('📍 Monitor').classes('text-sm font-bold').style('color: #1976d2; background: #e3f2fd; padding: 4px 10px; border-radius: 6px; min-width: 80px; text-align: center;')
+                        self.mission_mode_switch = ui.switch('Free', value=False, on_change=self._on_mission_mode_change).props('size=md color=primary')
+                    # Row 2: Params (bigger inputs)
+                    with ui.row().classes('w-full gap-1'):
+                        self.rth_alt_input = ui.input(label='RTH Alt', value='50').props('dense outlined').style('flex: 1;')
+                        self.safety_buffer_input = ui.input(label='Buffer', value='60', on_change=self._on_safety_buffer_change).props('dense outlined').style('flex: 1;')
+                        self.min_battery_input = ui.input(label='Min Bat%', value='30').props('dense outlined').style('flex: 1;')
+                        self.min_satellites_input = ui.input(label='Min Sat', value='8').props('dense outlined').style('flex: 0.8;')
+                    # Row 3: Buttons (bigger)
+                    with ui.row().classes('w-full gap-2 mt-1'):
+                        ui.button('Single', icon='play_arrow', on_click=self._start_single_mission).props('color=green no-caps dense size=sm').style('flex: 1;')
+                        ui.button('Relay', icon='sync', on_click=self._start_relay_mission).props('color=primary no-caps dense size=sm').style('flex: 1;')
+                        ui.button('Stop', icon='stop', on_click=self._stop_mission_ui).props('color=red no-caps dense size=sm').style('flex: 1;')
+
+                    # Row 4: Rotation view/control
+                    with ui.column().classes('w-full gap-1 mt-1'):
+                        with ui.row().classes('items-center gap-2'):
+                            ui.icon('sync_alt').style('font-size: 16px; color: #1565c0;')
+                            ui.label('Rotation').classes('text-sm font-bold').style('color: #1565c0;')
                         with ui.row().classes('w-full items-center gap-2'):
-                            ui.icon('show_chart').style('color: #1565c0;')
-                            ui.label("Live Battery Regression").classes('text-xs font-bold')
+                            self.rotation_order_label = ui.label('Order: --').classes('text-xs').style('color: #1976d2;')
+                            self.rotation_next_label = ui.label('Next: --').classes('text-xs font-bold').style('color: #0d47a1;')
+                        with ui.row().classes('w-full items-center gap-2'):
+                            options = []
+                            if self.mission_controller and self.mission_controller.drone_order:
+                                options = self.mission_controller.drone_order.copy()
+                            self.rotation_select = ui.select(options=options, value=(self.mission_controller.get_next_drone() if self.mission_controller else None), label='Set next').props('dense outlined').classes('flex-1')
+                            ui.button('Apply', icon='check', on_click=self._apply_next_drone_override).props('color=primary no-caps dense size=sm')
+                            ui.button('Reset', icon='restart_alt', on_click=self._reset_next_drone_override).props('flat no-caps dense size=sm')
+                
+            # Card 4: State Machine (compact)
+            with ui.card().classes('p-0').style('flex: 1.5; overflow: hidden; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); display: flex; flex-direction: column;'):
+                # Header
+                with ui.row().classes('w-full items-center gap-2').style('background: linear-gradient(135deg, #43a047 0%, #388e3c 100%); padding: 6px 10px; min-height: 32px;'):
+                    ui.icon('account_tree').style('color: white; font-size: 16px;')
+                    ui.label("State Machine").classes('text-sm font-bold').style('color: white;')
+                    
+                # Content
+                self.state_machine_container = ui.column().classes('w-full gap-0 justify-center').style('padding: 6px; flex: 1;')
+                with self.state_machine_container:
+                    self._build_state_machine_display()
+
+    def _build_logs_and_stats(self):
+        """Build the event-log / mission-stats / debug-console row."""
+        # Bottom row: Event Log and Mission Statistics side by side (or Debug Console when enabled)
+        # Normal view container
+        with ui.column().classes('w-full gap-2') as self.normal_logs_container:
+            with ui.row().classes('w-full gap-2 items-stretch').style('min-width: 0;'):
+                # Event Log
+                with ui.card().classes('p-2').style('flex: 1; min-width: 0; overflow: hidden;'):
+                    with ui.row().classes('items-center gap-2 pb-1').style('border-bottom: 1px solid #e0e0e0;'):
+                        ui.icon('list_alt').classes('text-lg text-primary')
+                        ui.label("Event Log").classes('text-sm font-bold')
+                    with ui.scroll_area().classes('w-full').style('height: 100px;').props('id=event-log') as self.event_scroll:
+                        self.event_log = ui.column().classes('w-full gap-0')
+                    
+                # Mission Statistics (hidden when debug console is shown)
+                with ui.card().classes('p-2').style('flex: 1; min-width: 0; overflow: hidden;') as self.mission_stats_card:
+                    with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #e0e0e0;'):
+                        ui.icon('analytics').classes('text-lg text-primary')
+                        ui.label("Mission Statistics").classes('text-sm font-bold')
+                        ui.space()
+                        ui.button(icon='delete', on_click=self._clear_mission_stats).props('flat dense size=sm').tooltip('Clear')
                         
-                        # Chart using ECharts
-                        self.rth_chart = ui.echart({
-                            'animation': False,
-                            'grid': {'left': '12%', 'right': '5%', 'top': '15%', 'bottom': '18%'},
-                            'legend': {
-                                'show': True,
-                                'top': 0,
-                                'textStyle': {'fontSize': 9},
-                                'itemWidth': 12,
-                                'itemHeight': 8
+                    # Header row
+                    with ui.row().classes('w-full text-xs font-bold text-gray-500 gap-0 mt-1'):
+                        ui.label("Drone").style('flex: 2;')
+                        ui.label("#").style('flex: 0.8; text-align: center;')
+                        ui.label("Est.").style('flex: 1.2; text-align: center;')
+                        ui.label("Travel").style('flex: 1.2; text-align: center;')
+                        ui.label("RTH").style('flex: 1.2; text-align: center;')
+                        
+                    with ui.scroll_area().classes('w-full').style('height: 80px;') as self.mission_stats_scroll:
+                        self.mission_stats_container = ui.column().classes('w-full gap-0')
+                    
+                # ROS Console (hidden by default, shown in place of Mission Stats)
+                with ui.card().classes('p-2').style('flex: 1; display: none;') as self.debug_console_container:
+                    with ui.row().classes('items-center gap-2 w-full pb-1').style('border-bottom: 1px solid #ffcc80;'):
+                        ui.icon('terminal').classes('text-lg').style('color: #e65100;')
+                        ui.label("ROS Console").classes('text-sm font-bold').style('color: #e65100;')
+                        ui.space()
+                        ui.button(icon='delete', on_click=self._clear_debug_console).props('flat dense size=sm').tooltip('Clear console')
+                        
+                    with ui.scroll_area().classes('w-full').style('height: 100px; background: #1e1e1e; border-radius: 4px;') as self.debug_scroll:
+                        self.debug_console = ui.column().classes('w-full gap-0 p-2')
+                
+            # RTH Prediction Debug Panel (expansion)
+            with ui.expansion("RTH Prediction Debug", icon='bug_report').classes('w-full').style('background: #fff8e1;') as self.rth_debug_expansion:
+                with ui.card().classes('w-full p-2').style('background: #fffde7;') as self.rth_debug_container:
+                    # Formula explanation
+                    with ui.row().classes('w-full items-center gap-2 pb-2').style('border-bottom: 1px solid #ffe082;'):
+                        ui.icon('calculate').style('color: #f57c00;')
+                        ui.label("Countdown = Predicted RTH - Travel Time - Buffer").classes('text-xs font-mono').style('color: #e65100;')
+                        
+                    # Debug info grid
+                    with ui.grid(columns=2).classes('w-full gap-x-4 gap-y-1 mt-2'):
+                        # Left column - Battery & Threshold
+                        ui.label("Current Battery:").classes('text-xs font-bold')
+                        self.rth_debug_battery = ui.label("--").classes('text-xs font-mono')
+                            
+                        ui.label("Batt Needed (now):").classes('text-xs font-bold')
+                        self.rth_debug_batt_needed = ui.label("--").classes('text-xs font-mono')
+                            
+                        ui.label("Batt Needed (MAX):").classes('text-xs font-bold').style('color: #d32f2f;')
+                        self.rth_debug_batt_max = ui.label("--").classes('text-xs font-mono font-bold').style('color: #d32f2f;')
+                            
+                        ui.label("RTH Threshold:").classes('text-xs font-bold').tooltip('MAX BattNeeded + 2%')
+                        self.rth_debug_threshold = ui.label("--").classes('text-xs font-mono')
+                            
+                        ui.label("Drain Rate:").classes('text-xs font-bold')
+                        self.rth_debug_drain = ui.label("--").classes('text-xs font-mono')
+                            
+                        ui.label("Data Points:").classes('text-xs font-bold')
+                        self.rth_debug_points = ui.label("--").classes('text-xs font-mono')
+                            
+                        ui.label("Monitoring Time:").classes('text-xs font-bold')
+                        self.rth_debug_elapsed = ui.label("--").classes('text-xs font-mono')
+                        
+                    ui.separator().classes('my-2')
+                        
+                    # Comparison section
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1'):
+                            ui.label("Predicted RTH:").classes('text-xs font-bold').style('color: #1565c0;')
+                            self.rth_debug_predicted = ui.label("--").classes('text-lg font-bold font-mono').style('color: #1565c0;')
+                        with ui.column().classes('flex-1'):
+                            ui.label("DJI Flight Time:").classes('text-xs font-bold').style('color: #7b1fa2;')
+                            self.rth_debug_dji = ui.label("--").classes('text-lg font-bold font-mono').style('color: #7b1fa2;')
+                        with ui.column().classes('flex-1'):
+                            ui.label("Difference:").classes('text-xs font-bold').style('color: #d32f2f;')
+                            self.rth_debug_diff = ui.label("--").classes('text-lg font-bold font-mono').style('color: #d32f2f;')
+                        
+                    # Regression details
+                    ui.separator().classes('my-2')
+                    with ui.row().classes('w-full gap-2'):
+                        ui.label("Regression:").classes('text-xs font-bold')
+                        self.rth_debug_regression = ui.label("battery(t) = slope × t + intercept").classes('text-xs font-mono').style('color: #616161;')
+                        
+                    # Live regression chart
+                    ui.separator().classes('my-2')
+                    with ui.row().classes('w-full items-center gap-2'):
+                        ui.icon('show_chart').style('color: #1565c0;')
+                        ui.label("Live Battery Regression").classes('text-xs font-bold')
+                        
+                    # Chart using ECharts
+                    self.rth_chart = ui.echart({
+                        'animation': False,
+                        'grid': {'left': '12%', 'right': '5%', 'top': '15%', 'bottom': '18%'},
+                        'legend': {
+                            'show': True,
+                            'top': 0,
+                            'textStyle': {'fontSize': 9},
+                            'itemWidth': 12,
+                            'itemHeight': 8
+                        },
+                        'xAxis': {
+                            'type': 'value',
+                            'name': 'Time (min)',
+                            'nameLocation': 'middle',
+                            'nameGap': 22,
+                            'min': 0,
+                            'axisLabel': {'fontSize': 9}
+                        },
+                        'yAxis': {
+                            'type': 'value',
+                            'name': 'Battery %',
+                            'nameLocation': 'middle',
+                            'nameGap': 32,
+                            'min': 0,
+                            'max': 100,
+                            'axisLabel': {'fontSize': 9}
+                        },
+                        'series': [
+                            {
+                                'name': 'Battery',
+                                'type': 'scatter',
+                                'data': [],
+                                'symbolSize': 5,
+                                'itemStyle': {'color': '#1976d2'}
                             },
-                            'xAxis': {
-                                'type': 'value',
-                                'name': 'Time (min)',
-                                'nameLocation': 'middle',
-                                'nameGap': 22,
-                                'min': 0,
-                                'axisLabel': {'fontSize': 9}
+                            {
+                                'name': 'Regression',
+                                'type': 'line',
+                                'data': [],
+                                'lineStyle': {'color': '#4caf50', 'width': 2},
+                                'symbol': 'none'
                             },
-                            'yAxis': {
-                                'type': 'value',
-                                'name': 'Battery %',
-                                'nameLocation': 'middle',
-                                'nameGap': 32,
-                                'min': 0,
-                                'max': 100,
-                                'axisLabel': {'fontSize': 9}
+                            {
+                                'name': 'MAX Threshold',
+                                'type': 'line',
+                                'data': [],
+                                'lineStyle': {'color': '#f44336', 'width': 2, 'type': 'dashed'},
+                                'symbol': 'none'
                             },
-                            'series': [
-                                {
-                                    'name': 'Battery',
-                                    'type': 'scatter',
-                                    'data': [],
-                                    'symbolSize': 5,
-                                    'itemStyle': {'color': '#1976d2'}
-                                },
-                                {
-                                    'name': 'Regression',
-                                    'type': 'line',
-                                    'data': [],
-                                    'lineStyle': {'color': '#4caf50', 'width': 2},
-                                    'symbol': 'none'
-                                },
-                                {
-                                    'name': 'MAX Threshold',
-                                    'type': 'line',
-                                    'data': [],
-                                    'lineStyle': {'color': '#f44336', 'width': 2, 'type': 'dashed'},
-                                    'symbol': 'none'
-                                },
-                                {
-                                    'name': 'RTH Point',
-                                    'type': 'scatter',
-                                    'data': [],
-                                    'symbolSize': 14,
-                                    'symbol': 'triangle',
-                                    'itemStyle': {'color': '#f44336'}
-                                },
-                                {
-                                    'name': 'Now',
-                                    'type': 'line',
-                                    'data': [],
-                                    'lineStyle': {'color': '#ff9800', 'width': 2, 'type': 'dotted'},
-                                    'symbol': 'none'
-                                },
-                                {
-                                    'name': 'Current Batt',
-                                    'type': 'scatter',
-                                    'data': [],
-                                    'symbolSize': 10,
-                                    'symbol': 'circle',
-                                    'itemStyle': {'color': '#ff9800', 'borderColor': '#fff', 'borderWidth': 2}
-                                }
-                            ],
-                            'tooltip': {
-                                'trigger': 'item',
-                                'formatter': '{a}: {c}'
+                            {
+                                'name': 'RTH Point',
+                                'type': 'scatter',
+                                'data': [],
+                                'symbolSize': 14,
+                                'symbol': 'triangle',
+                                'itemStyle': {'color': '#f44336'}
+                            },
+                            {
+                                'name': 'Now',
+                                'type': 'line',
+                                'data': [],
+                                'lineStyle': {'color': '#ff9800', 'width': 2, 'type': 'dotted'},
+                                'symbol': 'none'
+                            },
+                            {
+                                'name': 'Current Batt',
+                                'type': 'scatter',
+                                'data': [],
+                                'symbolSize': 10,
+                                'symbol': 'circle',
+                                'itemStyle': {'color': '#ff9800', 'borderColor': '#fff', 'borderWidth': 2}
                             }
-                        }).classes('w-full').style('height: 200px;')
-
+                        ],
+                        'tooltip': {
+                            'trigger': 'item',
+                            'formatter': '{a}: {c}'
+                        }
+                    }).classes('w-full').style('height: 200px;')
     def _build_drone_card(self, namespace: str, drone: DroneData):
         """Build an expandable card for a single drone."""
         # Use the drone's assigned color (stored in DroneData)
