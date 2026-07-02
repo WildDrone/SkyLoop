@@ -412,7 +412,7 @@ class PerpetualMonitorNode(Node):
                 # Force kill if graceful shutdown failed
                 try:
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                except:
+                except Exception:
                     pass
             del self.drone_processes[namespace]
         

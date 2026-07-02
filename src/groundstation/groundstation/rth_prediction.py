@@ -106,7 +106,7 @@ class DroneRTHPredictor:
                 if slope < 0:
                     t_rth = (rth_threshold - intercept) / slope
                     predicted_rth = max(0.0, t_rth - elapsed)
-            except:
+            except Exception:
                 pass
 
         self.csv_writer.writerow([
@@ -221,7 +221,7 @@ class DroneRTHPredictor:
         # Linear regression: battery = slope*t + intercept
         try:
             slope, intercept = np.polyfit(times, batteries, 1)
-        except:
+        except Exception:
             return float('inf')
 
         # slope should be negative (battery draining)
@@ -258,7 +258,7 @@ class DroneRTHPredictor:
         try:
             slope, intercept = np.polyfit(times, batteries, 1)
             return -slope  # Negative slope = positive drain rate
-        except:
+        except Exception:
             return 0.0
 
     def get_debug_info(self) -> dict:
@@ -301,7 +301,7 @@ class DroneRTHPredictor:
 
         try:
             slope, intercept = np.polyfit(times, batteries, 1)
-        except:
+        except Exception:
             return info
 
         info['slope'] = slope

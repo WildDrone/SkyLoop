@@ -19,7 +19,7 @@ setup(
     zip_safe=True,
     maintainer='edr',
     maintainer_email='65714311+edouardrolland@users.noreply.github.com',
-    description='TODO: Package description',
+    description='ROS 2 groundstation for perpetual multi-drone monitoring with battery-relay missions.',
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [

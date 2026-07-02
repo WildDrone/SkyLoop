@@ -16,7 +16,7 @@ setup(
     zip_safe=True,
     maintainer='edr',
     maintainer_email='65714311+edouardrolland@users.noreply.github.com',
-    description='TODO: Package description',
+    description='ROS 2 node bridging a DJI drone via the WildBridge app (commands and telemetry).',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [

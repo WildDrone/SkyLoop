@@ -10,6 +10,7 @@ Project: WildDrone
 
 import asyncio
 import math
+import os
 import threading
 from typing import Dict
 from pathlib import Path
@@ -94,11 +95,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
 
     def _init_state(self):
         """Initialize UI element references and mission/runtime state."""
-        # Default drone IPs to auto-connect at startup
-        self.AUTO_CONNECT_DRONE_IPS = [
+        # Drone IPs to auto-connect at startup. Override with env var
+        # WILDPERPETUA_AUTO_CONNECT="ip:name,ip:name" (empty disables auto-connect).
+        self.AUTO_CONNECT_DRONE_IPS = self._auto_connect_ips_from_env([
             ('10.142.188.57', 'drone_1'),
             ('10.142.188.117', 'drone_2'),
-        ]
+        ])
 
         # UI element references (populated when page loads)
         self.map = None
@@ -158,7 +160,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # ROS bag recording
         self._rosbag_process = None  # subprocess.Popen for ros2 bag record
         self._rosbag_recording = False
-        self._rosbag_dir = "/WildPerpetua/src/rosbags"  # Mounted to host's src/rosbags/
+        self._rosbag_dir = os.environ.get('WILDPERPETUA_ROSBAG_DIR', '/WildPerpetua/src/rosbags')  # Mounted to host's src/rosbags/
         
         # Debug console (ROS logs)
         self.debug_mode = False
@@ -212,13 +214,12 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         # Video/Telemetry recording state
         self.recording_running: Dict[str, bool] = {}  # {namespace: is_recording}
-        self.recording_dir = "/WildPerpetua/recordings"  # Default recording directory
+        self.recording_dir = os.environ.get('WILDPERPETUA_RECORDING_DIR', '/WildPerpetua/recordings')  # Default recording directory
         self.recording_sessions: Dict[str, dict] = {}  # {namespace: session_data}
         self.recording_timers: Dict[str, object] = {}  # {namespace: ui.timer}
         self.latest_telemetry: Dict[str, dict] = {}  # {namespace: telemetry_data} - latest telemetry for recording
         
         # Create default recording directory
-        import os
         os.makedirs(self.recording_dir, exist_ok=True)
         
         # UI update throttling - reduces browser lag by limiting update frequency
@@ -359,7 +360,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 
                 # Save to temp file
                 import tempfile
-                import os
                 temp_dir = tempfile.gettempdir()
                 model_path = os.path.join(temp_dir, filename)
                 
@@ -661,7 +661,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         
         async def start_recording():
             """Initialize and start recording session."""
-            import os
             import csv
 
             # Create output directory
@@ -1443,10 +1442,25 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         self.get_logger().warning(f"_get_drone_altitude({namespace}): drone not found!")
         return 0.0
     
+    @staticmethod
+    def _auto_connect_ips_from_env(default):
+        """Parse WILDPERPETUA_AUTO_CONNECT ("ip:name,ip:name"), else use default."""
+        raw = os.environ.get('WILDPERPETUA_AUTO_CONNECT')
+        if raw is None:
+            return default
+        pairs = []
+        for entry in raw.split(','):
+            entry = entry.strip()
+            if not entry:
+                continue
+            ip, _, name = entry.partition(':')
+            pairs.append((ip.strip(), name.strip()))
+        return pairs
+
     def _auto_connect_on_startup(self):
         """Auto-connect to predefined drone IPs at startup."""
         import threading
-        
+
         def connect_drones():
             # Wait a bit for ROS2 to fully initialize
             time.sleep(2.0)
@@ -1647,28 +1661,28 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 rth_alt = self.mission_controller.config.rth_altitude
                 if self.rth_alt_input and rth_alt > 0:
                     self.rth_alt_input.value = str(int(rth_alt))
-            except:
+            except Exception:
                 pass
             
             try:
                 safety_buf = self.mission_controller.config.safety_buffer_seconds
                 if self.safety_buffer_input and safety_buf >= 0:
                     self.safety_buffer_input.value = str(int(safety_buf))
-            except:
+            except Exception:
                 pass
             
             try:
                 min_batt = self.mission_controller.config.min_battery_to_launch
                 if self.min_battery_input and min_batt > 0:
                     self.min_battery_input.value = str(int(min_batt))
-            except:
+            except Exception:
                 pass
             
             try:
                 min_sats = self.mission_controller.config.min_satellites
                 if self.min_satellites_input and min_sats > 0:
                     self.min_satellites_input.value = str(int(min_sats))
-            except:
+            except Exception:
                 pass
         
         # 3. Restore mission mode toggle state
@@ -2008,7 +2022,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             if ns in self.drone_trajectory_lines and self.drone_trajectory_lines[ns]:
                 try:
                     self.map.remove_layer(self.drone_trajectory_lines[ns])
-                except:
+                except Exception:
                     pass
                 del self.drone_trajectory_lines[ns]
             if ns in self.drone_trajectories:
@@ -3550,7 +3564,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         if namespace in self.drone_trajectory_lines and self.drone_trajectory_lines[namespace]:
             try:
                 self.map.remove_layer(self.drone_trajectory_lines[namespace])
-            except:
+            except Exception:
                 pass
             self.drone_trajectory_lines[namespace] = None
         
@@ -3597,7 +3611,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                 if namespace in self.drone_trajectory_lines and self.drone_trajectory_lines[namespace]:
                     try:
                         self.map.remove_layer(self.drone_trajectory_lines[namespace])
-                    except:
+                    except Exception:
                         pass
                 
                 # Create new polyline with all points
@@ -3627,7 +3641,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             # Nothing to fade, just clear
             try:
                 self.map.remove_layer(polyline)
-            except:
+            except Exception:
                 pass
             self.drone_trajectory_lines[namespace] = None
             self.drone_trajectories[namespace] = []
@@ -3661,7 +3675,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
                     # Final step - clear everything
                     self.drone_trajectory_lines[namespace] = None
                     self.drone_trajectories[namespace] = []
-            except:
+            except Exception:
                 pass
         
         # Schedule fade steps (3 seconds total, 6 steps)
@@ -4246,7 +4260,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     def _on_rosbag_change(self, e):
         """Handle ROS bag recording toggle change."""
         import subprocess
-        import os
         from datetime import datetime
         
         enabled = e.value
@@ -4647,7 +4660,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Set up logging handlers to capture all console output."""
         import logging
         import sys
-        import os
         import io
         import threading
         
@@ -4735,7 +4747,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         """Remove the debug logging handler and restore stdout/stderr."""
         import logging
         import sys
-        import os
         
         # Stop capture threads
         self._stop_capture = True
@@ -5028,7 +5039,6 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
     
     def _do_soft_restart(self, dialog):
         """Perform a soft restart - reset internal state without killing the process."""
-        import os
         import signal
         
         dialog.close()
@@ -5039,7 +5049,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
         # Stop any active missions
         try:
             self.stop_mission()
-        except:
+        except Exception:
             pass
         
         # Shutdown mission controller thread
@@ -5051,10 +5061,10 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 process.wait(timeout=2)
-            except:
+            except Exception:
                 try:
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                except:
+                except Exception:
                     pass
         self.drone_processes.clear()
         
@@ -5063,7 +5073,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             for sub in self.drone_subscribers[ns].values():
                 try:
                     self.destroy_subscription(sub)
-                except:
+                except Exception:
                     pass
         self.drone_subscribers.clear()
         
@@ -5071,7 +5081,7 @@ class PerpetualMonitorGUI(PerpetualMonitorNode):
             for pub in self.drone_publishers[ns].values():
                 try:
                     self.destroy_publisher(pub)
-                except:
+                except Exception:
                     pass
         self.drone_publishers.clear()
         

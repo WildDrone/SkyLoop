@@ -12,12 +12,16 @@ License: MIT
 For more information, visit: https://github.com/WildDrone/WildBridge
 """
 
-import requests
 import json
+import logging
 import socket
 import threading
 import time
 from datetime import datetime
+
+import requests
+
+logger = logging.getLogger(__name__)
 
 # Discovery Configuration
 DISCOVERY_PORT = 30000
@@ -59,7 +63,7 @@ def discover_drone(timeout=5.0):
             except socket.timeout:
                 break
     except Exception as e:
-        print(f"Discovery error: {e}")
+        logger.error(f"Discovery error: {e}")
     finally:
         sock.close()
     
@@ -98,7 +102,7 @@ def discover_all_drones(timeout=5.0):
             except socket.timeout:
                 break
     except Exception as e:
-        print(f"Discovery error: {e}")
+        logger.error(f"Discovery error: {e}")
     finally:
         sock.close()
     
@@ -186,7 +190,7 @@ class DJIInterface:
         if self._telemetry_socket:
             try:
                 self._telemetry_socket.close()
-            except:
+            except Exception:
                 pass
         if self._telemetry_thread:
             self._telemetry_thread.join(timeout=2)
@@ -231,7 +235,7 @@ class DJIInterface:
                 if self._telemetry_socket:
                     try:
                         self._telemetry_socket.close()
-                    except:
+                    except Exception:
                         pass
     
     def getTelemetry(self):
@@ -390,7 +394,7 @@ class DJIInterface:
                 print("EP : " + endPoint + "\t" + str(response.content, encoding="utf-8"))
             return response.content.decode('utf-8')
         except requests.exceptions.RequestException as e:
-            print(f"Request error at {endPoint}: {e}")
+            logger.error(f"Request error at {endPoint}: {e}")
             return ""
 
     def requestSendStick(self, leftX=0, leftY=0, rightX=0, rightY=0):
