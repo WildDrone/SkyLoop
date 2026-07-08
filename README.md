@@ -96,16 +96,7 @@ The `groundstation` node is the system entry point. It spawns a `dji_node` proce
 
 ### Data flow
 
-```mermaid
-flowchart LR
-    RC["DJI RC\n(WildBridge app)"] -- "HTTP :8080\nTCP :8081\nWebRTC WHIP" --> dji_node
-    dji_node -- "ROS 2 topics\n/namespace/..." --> GS["groundstation\n(perpetual_monitor_node)"]
-    GS -- "NiceGUI\nhttp://localhost:8086" --> Browser
-    GS -- "ROS 2 commands" --> dji_node
-    dji_node -- "HTTP POST" --> RC
-    Browser -- "WHEP video" --> MediaMTX
-    RC -- "WHIP publish" --> MediaMTX["MediaMTX\n(WebRTC relay)"]
-```
+![SkyLoop Architecture](media/skyloop_architecture.drawio.svg)
 
 ---
 
